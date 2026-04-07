@@ -9,41 +9,59 @@
 
 ## Django Project Package
 
-- `agentic_curiosity/settings.py`: Global Django settings. Uses SQLite, includes `core` and `ai_chat` in `INSTALLED_APPS`.
-- `agentic_curiosity/urls.py`: Root URL config. Routes `""` to `core.urls` and `/admin/` to Django admin.
+- `agentic_curiosity/settings.py`: Global Django settings. Uses SQLite, includes `core`, `ai_chat`, and `chat_api`, and configures console logging for the `ai_chat` logger through `AI_CHAT_LOG_LEVEL`.
+- `agentic_curiosity/urls.py`: Root URL config. Routes `""` to `core.urls`, `/api/chat/` to `chat_api.urls`, and `/admin/` to Django admin.
 - `agentic_curiosity/asgi.py` and `agentic_curiosity/wsgi.py`: Standard Django entry points.
 
 ## Current Apps
 
 ### `core`
 
-- `core/views.py`: Placeholder `home()` view returning a plain text health-style response.
-- `core/urls.py`: Wires the root route to `home()`.
-- `core/models.py`, `core/admin.py`, `core/tests.py`: Generated stubs with no meaningful behavior yet.
+- `core/views.py`: Renders the browser chat console at `/` and the topic-management page at `/course-topics/`.
+- `core/urls.py`: Wires the root route and the course-topic page.
+- `core/templates/core/home.html`: Chat console for login, topic selection, session creation/retrieval, and sending messages.
+- `core/templates/core/course_topics.html`: Browser UI for creating and inspecting stored `CourseTopic` records.
+- `core/tests.py`: Route and template smoke tests for the browser pages.
 
 ### `ai_chat`
 
 - `ai_chat/__init__.py`: Public exports for the app.
 - `ai_chat/agents.py`: Provider-agnostic `Agent` base class. Shared logic lives here.
+- `ai_chat/chat.py`: Persisted multi-agent orchestration, prompt routing, turn storage, and context compaction.
+- `ai_chat/models.py`: Persisted chat tables: `ChatSession`, `ChatTurn`, and `ChatContext`.
+- `ai_chat/admin.py`: Django admin registration for sessions, turns, and context.
 - `ai_chat/openai_agent.py`: `OpenAIAgent` implementation using the OpenAI SDK chat completions client.
 - `ai_chat/exceptions.py`: `AgentConfigurationError` and `AgentResponseError`.
 - `ai_chat/tests.py`: Behavioral tests for the base class and `OpenAIAgent`.
-- `ai_chat/models.py`, `ai_chat/views.py`, `ai_chat/admin.py`: Intentional placeholders because this app is currently a Python utility app rather than a web-facing app.
+
+### `chat_api`
+
+- `chat_api/models.py`: `ApiToken` plus `CourseTopic`, which stores the five prompt texts used by the web/API flow.
+- `chat_api/services.py`: Bridges HTTP/session workflow to `ai_chat.Chat`, including prompt resolution from a session's locked `CourseTopic`.
+- `chat_api/views.py`: Token-authenticated JSON endpoints for login, token issuance, course topics, session creation, session lookup, and chat replies.
+- `chat_api/urls.py`: Routes under `/api/chat/`.
+- `chat_api/admin.py`: Django admin registration for API tokens and course topics.
+- `chat_api/tests.py`: Endpoint and service tests for the authenticated chat flow.
 
 ## Change Patterns
 
 - For generic chat behavior shared across providers, edit `ai_chat/agents.py`.
+- For persisted routing, session storage, timestamps, or context behavior, edit `ai_chat/chat.py` and/or `ai_chat/models.py`.
+- For course-topic-backed prompt selection or token-authenticated chat workflow, edit `chat_api/models.py`, `chat_api/services.py`, `chat_api/views.py`, and `chat_api/urls.py`.
+- For browser workflow changes, edit `core/views.py`, `core/urls.py`, and the relevant template in `core/templates/core/`.
 - For one provider only, add or modify a dedicated module in `ai_chat/`.
 - Keep the OpenAI-shaped input contract centered on `Agent.create()`.
 - Keep `Agent.ask()` as the convenience wrapper that returns plain text.
 - Re-export public provider classes in `ai_chat/__init__.py`.
-- Add tests in `ai_chat/tests.py` whenever behavior changes.
+- Add tests in `ai_chat/tests.py`, `chat_api/tests.py`, or `core/tests.py` whenever behavior changes in those areas.
 - For any new feature, add tests with the feature work and run both the focused new tests and the broader existing suite before considering the change complete.
 
 ## Common Commands
 
 - `uv run python manage.py test`
+- `uv run python manage.py test chat_api`
 - `uv run python manage.py test ai_chat`
+- `uv run python manage.py test core`
 - `uv run python manage.py check`
 - `uv run python manage.py runserver`
 - `uv run python manage.py startapp <app_name>`

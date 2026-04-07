@@ -7,8 +7,9 @@ The repository currently contains:
 - A reusable `ai_chat.Agent` base class with an OpenAI-style request contract.
 - An `OpenAIAgent` adapter backed by the OpenAI Chat Completions API.
 - A persisted `Chat` orchestration class that routes user messages, stores all turns, and compacts long-running context.
-- A `chat_api` app with Django-authenticated token issuance plus session-based chat endpoints.
-- A small Django app shell with a health-style home route and admin support for chat records.
+- A `chat_api` app with Django-authenticated token issuance, course-topic management, and session-based chat endpoints.
+- A `core` app with a browser chat console at `/` and a course-topic management page at `/course-topics/`.
+- Admin support for chat sessions, turns, contexts, API tokens, and course topics.
 
 ## Requirements
 
@@ -24,7 +25,11 @@ uv run python manage.py migrate
 uv run python manage.py runserver
 ```
 
-The root page responds with `Agentic Curiosity is running.` and the Django admin is available at `/admin/`.
+The browser tools are available at:
+
+- `/`: chat console for login, topic selection, session creation, and messaging
+- `/course-topics/`: create and inspect reusable prompt sets
+- `/admin/`: Django admin
 
 ## Environment
 
@@ -43,6 +48,7 @@ Supported settings:
 - `AI_CHAT_CATEGORIZER_MODEL`
 - `AI_CHAT_ANSWERER_MODEL`
 - `AI_CHAT_BRIEFER_MODEL`
+- `AI_CHAT_LOG_LEVEL`
 
 Minimal `.env` example:
 
@@ -64,9 +70,16 @@ Core pieces:
 
 Persistent storage:
 
-- `ChatSession`: logical user sessions.
-- `ChatTurn`: immutable stored conversation turns with both user text and agent response.
+- `ChatSession`: logical user sessions, including the locked `course_topic` chosen at session creation time.
+- `ChatTurn`: stored conversation turns with both user text and agent response.
 - `ChatContext`: mutable per-session context state, including the compacted summary for that chat session.
+
+Each of these records includes `created_at` and `updated_at` timestamps.
+
+Prompt storage:
+
+- `chat_api.CourseTopic`: named prompt bundle containing `teacher`, `judge`, `categorizer`, `answerer`, and `briefer` prompts.
+- `ChatSession.course_topic`: frozen topic selection for that session so later retrieval cannot silently change prompt behavior.
 
 ## How `Chat` Works
 
@@ -133,13 +146,14 @@ Available routes:
 
 - `POST /api/chat/login/`: Django login with JSON credentials, returns the user's API token.
 - `POST /api/chat/token/`: returns the current logged-in user's API token.
-- `POST /api/chat/sessions/`: creates a new chat session for the token owner and returns `session_id`.
+- `GET /api/chat/course-topics/`: lists available course topics.
+- `POST /api/chat/course-topics/`: creates a new course topic with the five stored prompts.
+- `POST /api/chat/sessions/`: creates a new chat session for the token owner and requires `course_topic_id`.
+- `GET /api/chat/sessions/<session_id>/`: returns session metadata, including the stored topic.
 - `POST /api/chat/chat/`: accepts `session_id` and `text`, checks that the session belongs to the token owner, and returns the chat response.
 
-The default API prompts are:
-
-- `teacher`: teaches elementary math, introduces a topic when needed, and asks short check-for-understanding questions.
-- `judge`: checks whether the student's answer is correct, explains mistakes, and asks whether the user understood.
+New sessions always use the selected `CourseTopic`, and that topic stays fixed for the life of the session.
+The seeded default topic is `Elementary Math`.
 
 Example flow:
 
@@ -148,13 +162,37 @@ curl -X POST http://127.0.0.1:8000/api/chat/login/ \
   -H "Content-Type: application/json" \
   -d '{"username":"alice","password":"wonderland"}'
 
-curl -X POST http://127.0.0.1:8000/api/chat/sessions/ \
+curl http://127.0.0.1:8000/api/chat/course-topics/ \
   -H "Authorization: Token <token>"
+
+curl -X POST http://127.0.0.1:8000/api/chat/sessions/ \
+  -H "Authorization: Token <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"course_topic_id":1}'
 
 curl -X POST http://127.0.0.1:8000/api/chat/chat/ \
   -H "Authorization: Token <token>" \
   -H "Content-Type: application/json" \
   -d '{"session_id":1,"text":"2 + 2 = 4"}'
+
+curl http://127.0.0.1:8000/api/chat/sessions/1/ \
+  -H "Authorization: Token <token>"
+```
+
+Course topic creation example:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/chat/course-topics/ \
+  -H "Authorization: Token <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name":"Physics Intro",
+    "teacher_prompt":"Teach one physics idea at a time in simple language.",
+    "judge_prompt":"Judge the student answer and explain mistakes simply.",
+    "categorizer_prompt":"Return only the prompt number for the best next reply.",
+    "answerer_prompt":"Answer clearly and stay inside the selected prompt.",
+    "briefer_prompt":"Condense the session and keep important learning state."
+  }'
 ```
 
 ## Context Compaction
@@ -183,6 +221,17 @@ uv run python manage.py compact_chat_contexts \
   --system "Condense old conversation context and preserve important facts."
 ```
 
+## Logging
+
+`ai_chat.chat` now logs its main lifecycle events to the console during development, including:
+
+- session creation
+- prompt selection
+- turn persistence
+- context compaction
+
+Control the log level with `AI_CHAT_LOG_LEVEL`. The default is `INFO`.
+
 ## Development Commands
 
 ```bash
@@ -198,7 +247,7 @@ uv run python manage.py runserver
 ```text
 agentic_curiosity/  Django project settings and root URLs
 ai_chat/            Reusable agent and persisted chat utilities
-chat_api/           Token-authenticated chat HTTP endpoints
-core/               Minimal web app with the home route
+chat_api/           Token-authenticated chat HTTP endpoints and course topics
+core/               Browser chat console and topic-management pages
 manage.py           Django entry point
 ```

@@ -16,9 +16,12 @@ Read `references/project-map.md` before making non-trivial changes. It contains 
 - Treat `ai_chat` as a reusable Python utility app, not a web app. Keep provider-neutral behavior in `ai_chat/agents.py` and each concrete provider in its own module such as `ai_chat/openai_agent.py`.
 - Preserve the current split in the chat API: `Agent.ask()` is the text-in/text-out helper, while `Agent.create()` preserves the OpenAI-style request shape for cross-provider compatibility.
 - Keep persisted chat orchestration and prompt routing in `ai_chat/chat.py`. The categorizer currently sees numbered short prompt descriptions and should return only the selected prompt number.
+- Treat `chat_api.CourseTopic` as the source of the five stored prompt texts used by the web/API flow. Session prompt behavior should come from the session's locked `course_topic`, not from hardcoded constants.
+- Preserve the session invariant: once a `ChatSession` is created, its stored `course_topic` determines later replies and retrieve flows should not allow that topic to be silently swapped.
 - Re-export public agent classes from `ai_chat/__init__.py` if other modules should import them directly from `ai_chat`.
 - Update tests whenever public `ai_chat` behavior changes.
 - Register new Django apps in `agentic_curiosity/settings.py`, and only wire URLs when the app actually serves HTTP routes.
+- `agentic_curiosity/settings.py` now contains console logging for the `ai_chat` logger. If you change chat logging behavior, keep `AI_CHAT_LOG_LEVEL` and the logger wiring coherent.
 
 ## Common Tasks
 
@@ -26,11 +29,23 @@ Read `references/project-map.md` before making non-trivial changes. It contains 
 
 1. Read `references/project-map.md` and confirm whether the change belongs in shared logic or a provider-specific adapter.
 2. Change `ai_chat/chat.py` for persisted chat orchestration, prompt routing, or context-compaction behavior.
-3. Change `ai_chat/agents.py` only for provider-agnostic behavior shared by multiple adapters.
-4. Keep provider-specific SDK calls in their own file.
-5. Add or update tests in `ai_chat/tests.py` for the new behavior.
-6. If you change exports or public behavior, update `ai_chat/__init__.py`.
-7. Verify with the focused tests, then run the broader suite with `uv run python manage.py test` and `uv run python manage.py check`.
+3. Change `chat_api/services.py` when the web/API flow needs to resolve prompt bundles from `CourseTopic` or session metadata.
+4. Change `ai_chat/agents.py` only for provider-agnostic behavior shared by multiple adapters.
+5. Keep provider-specific SDK calls in their own file.
+6. Add or update tests in `ai_chat/tests.py` for the new behavior and in `chat_api/tests.py` if the HTTP/session workflow changed.
+7. If you change exports or public behavior, update `ai_chat/__init__.py`.
+8. Verify with the focused tests, then run the broader suite with `uv run python manage.py test` and `uv run python manage.py check`.
+
+### Change Course Topics Or Chat API Flow
+
+1. Read `references/project-map.md` to confirm the current routes, templates, and models.
+2. Change `chat_api/models.py` for `CourseTopic` fields or token-related data.
+3. Change `ai_chat/models.py` only when persisted chat records such as `ChatSession`, `ChatTurn`, or `ChatContext` need schema changes.
+4. Change `chat_api/views.py` and `chat_api/urls.py` for token-authenticated JSON routes.
+5. Change `core/views.py`, `core/urls.py`, and the relevant `core/templates/core/*.html` page when the browser workflow changes.
+6. If you add or alter models, run `uv run python manage.py makemigrations` and `uv run python manage.py migrate`.
+7. Add or update tests in `chat_api/tests.py` and `core/tests.py`.
+8. Verify with `uv run python manage.py test` and `uv run python manage.py check`.
 
 ### Add A New AI Provider
 
@@ -54,6 +69,8 @@ Read `references/project-map.md` before making non-trivial changes. It contains 
 
 - For feature work, run the targeted tests you added or changed first.
 - `uv run python manage.py test`
+- `uv run python manage.py test chat_api`
 - `uv run python manage.py test ai_chat`
+- `uv run python manage.py test core`
 - `uv run python manage.py check`
 - `uv run python manage.py runserver`
