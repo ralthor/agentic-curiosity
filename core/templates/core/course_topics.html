@@ -255,8 +255,8 @@
             <div class="eyebrow">Topic Studio</div>
             <h1>Store reusable prompt sets as course topics.</h1>
             <p>
-                Each topic defines the five prompts used by the chat session flow: teacher, judge, categorizer,
-                answerer, and briefer. Topics created here become selectable on the chat page for new sessions.
+                Each topic defines the six prompts used by the chat session flow: teacher, judge, categorizer,
+                answerer, planner, and briefer. Topics created here become selectable on the chat page for new sessions.
             </p>
             <div class="top-links">
                 <a href="{{ home_url }}">Open Chat Console</a>
@@ -303,6 +303,10 @@
                     <div class="field">
                         <label for="answerer_prompt">Answerer Prompt</label>
                         <textarea id="answerer_prompt" name="answerer_prompt" placeholder="Describe the main answer generation behavior."></textarea>
+                    </div>
+                    <div class="field">
+                        <label for="planner_prompt">Planner Prompt</label>
+                        <textarea id="planner_prompt" name="planner_prompt" placeholder="Describe how the planner should track covered items, remaining items, and the next teaching step."></textarea>
                     </div>
                     <div class="field">
                         <label for="briefer_prompt">Briefer Prompt</label>
@@ -442,6 +446,7 @@
                     ["Judge Prompt", topic.judge_prompt],
                     ["Categorizer Prompt", topic.categorizer_prompt],
                     ["Answerer Prompt", topic.answerer_prompt],
+                    ["Planner Prompt", topic.planner_prompt],
                     ["Briefer Prompt", topic.briefer_prompt]
                 ].forEach(([label, value]) => {
                     const details = document.createElement("details");

@@ -16,6 +16,7 @@ class CourseTopic(models.Model):
     judge_prompt = models.TextField()
     categorizer_prompt = models.TextField()
     answerer_prompt = models.TextField()
+    planner_prompt = models.TextField()
     briefer_prompt = models.TextField()
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

@@ -10,6 +10,7 @@ from .models import CourseTopic
 
 DEFAULT_CATEGORIZER_MODEL = "gpt-5-mini"
 DEFAULT_ANSWERER_MODEL = "gpt-5.4-mini"
+DEFAULT_PLANNER_MODEL = "gpt-5-mini"
 DEFAULT_BRIEFER_MODEL = "gpt-5-mini"
 
 
@@ -76,6 +77,10 @@ def build_chat(
         "AI_CHAT_ANSWERER_MODEL",
         default_model=DEFAULT_ANSWERER_MODEL,
     )
+    planner_model = _resolve_agent_model(
+        "AI_CHAT_PLANNER_MODEL",
+        default_model=DEFAULT_PLANNER_MODEL,
+    )
     briefer_model = _resolve_agent_model(
         "AI_CHAT_BRIEFER_MODEL",
         default_model=DEFAULT_BRIEFER_MODEL,
@@ -89,9 +94,11 @@ def build_chat(
     return Chat(
         user_id=user.pk,
         session_id=session_id,
+        topic_name=resolved_course_topic.name,
         prompts=[
             ChatPrompt("teacher", resolved_course_topic.teacher_prompt),
             ChatPrompt("judge", resolved_course_topic.judge_prompt),
+            ChatPrompt("planner", resolved_course_topic.planner_prompt),
         ],
         categorizer_agent=OpenAIAgent(
             system=resolved_course_topic.categorizer_prompt,
@@ -103,6 +110,12 @@ def build_chat(
             system=resolved_course_topic.answerer_prompt,
             request_defaults={
                 "model": answerer_model,
+            },
+        ),
+        planner_agent=OpenAIAgent(
+            system=resolved_course_topic.planner_prompt,
+            request_defaults={
+                "model": planner_model,
             },
         ),
         briefer_agent=OpenAIAgent(

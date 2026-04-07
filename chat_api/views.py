@@ -63,6 +63,7 @@ def _serialize_course_topic(course_topic: CourseTopic) -> dict:
         "judge_prompt": course_topic.judge_prompt,
         "categorizer_prompt": course_topic.categorizer_prompt,
         "answerer_prompt": course_topic.answerer_prompt,
+        "planner_prompt": course_topic.planner_prompt,
         "briefer_prompt": course_topic.briefer_prompt,
         "created_at": course_topic.created_at.isoformat(),
         "updated_at": course_topic.updated_at.isoformat(),
@@ -180,6 +181,7 @@ def course_topics_view(request):
             judge_prompt=_require_non_blank_string(payload, "judge_prompt"),
             categorizer_prompt=_require_non_blank_string(payload, "categorizer_prompt"),
             answerer_prompt=_require_non_blank_string(payload, "answerer_prompt"),
+            planner_prompt=_require_non_blank_string(payload, "planner_prompt"),
             briefer_prompt=_require_non_blank_string(payload, "briefer_prompt"),
         )
     except ValueError as exc:

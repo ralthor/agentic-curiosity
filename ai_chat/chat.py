@@ -35,9 +35,11 @@ class Chat:
         prompts: PromptCollection | None = None,
         categorizer_agent: Agent | None = None,
         answerer_agent: Agent | None = None,
+        planner_agent: Agent | None = None,
         briefer_agent: Agent | None = None,
         context_threshold_bytes: int = 5_120,
         recent_turns_to_keep: int = 10,
+        topic_name: str | None = None,
     ) -> None:
         if context_threshold_bytes <= 0:
             raise ValueError("context_threshold_bytes must be greater than zero.")
@@ -49,9 +51,11 @@ class Chat:
         self.prompts = self._normalize_prompts(prompts or {})
         self.categorizer_agent = categorizer_agent
         self.answerer_agent = answerer_agent
+        self.planner_agent = planner_agent
         self.briefer_agent = briefer_agent
         self.context_threshold_bytes = context_threshold_bytes
         self.recent_turns_to_keep = recent_turns_to_keep
+        self.topic_name = topic_name.strip() if isinstance(topic_name, str) and topic_name.strip() else None
 
     @classmethod
     def create_session(cls, *, user_id: str | int) -> ChatSession:
@@ -67,8 +71,8 @@ class Chat:
             raise ValueError("text must not be blank.")
         if self.categorizer_agent is None:
             raise ValueError("categorizer_agent is required to send a reply.")
-        if self.answerer_agent is None:
-            raise ValueError("answerer_agent is required to send a reply.")
+        if self.answerer_agent is None and self.planner_agent is None:
+            raise ValueError("At least one response agent is required to send a reply.")
         if not self.prompts:
             raise ValueError("At least one prompt is required to send a reply.")
 
@@ -156,16 +160,19 @@ class Chat:
         recent_turns_to_keep: int = 10,
     ) -> int:
         compacted_count = 0
-        contexts = ChatContext.objects.select_related("session").order_by("session__user_id", "session_id")
+        contexts = ChatContext.objects.select_related("session__course_topic").order_by("session__user_id", "session_id")
         logger.info("Scanning %s stored chat context(s) for compaction.", contexts.count())
 
         for context in contexts:
+            course_topic = context.session.course_topic
             chat = cls(
                 user_id=context.session.user_id,
                 session_id=context.session_id,
+                prompts={"planner": course_topic.planner_prompt} if course_topic is not None else {},
                 briefer_agent=briefer_agent,
                 context_threshold_bytes=context_threshold_bytes,
                 recent_turns_to_keep=recent_turns_to_keep,
+                topic_name=course_topic.name if course_topic is not None else None,
             )
             if chat._manage_context(context, force=False):
                 compacted_count += 1
@@ -207,13 +214,22 @@ class Chat:
             for index, prompt_text in enumerate(self.prompts.values(), start=1)
         )
         context_text = self._render_context_for_text(context, turns)
-        categorizer_prompt = (
-            "Choose the single best prompt for the next reply.\n"
-            "Return only the prompt number and nothing else.\n\n"
-            f"Available prompts:\n{prompt_options}\n\n"
-            f"Current context:\n{context_text}\n\n"
-            f"Latest user message:\n{user_text}"
+        sections = [
+            "Choose the single best prompt for the next reply.\nReturn only the prompt number and nothing else."
+        ]
+        routing_guidance = self._build_routing_guidance()
+        if routing_guidance:
+            sections.append(f"Routing guidance:\n{routing_guidance}")
+        if self.topic_name:
+            sections.append(f"Current course topic:\n{self.topic_name}")
+        sections.extend(
+            [
+                f"Available prompts:\n{prompt_options}",
+                f"Current context:\n{context_text}",
+                f"Latest user message:\n{user_text}",
+            ]
         )
+        categorizer_prompt = "\n\n".join(sections)
         raw_selection = self.categorizer_agent.ask(categorizer_prompt, user=self.user_id)
         prompt_key = self._parse_prompt_key(raw_selection)
         logger.info(
@@ -233,8 +249,23 @@ class Chat:
         context: ChatContext,
         turns: Sequence[ChatTurn],
     ) -> str:
+        if prompt_key == "planner":
+            if self.planner_agent is None:
+                raise ValueError("planner_agent is required when the planner prompt is selected.")
+            messages = self._build_agent_messages(
+                self.planner_agent,
+                *self._build_course_workflow_messages(prompt_key),
+                *self._build_context_messages(context, turns),
+                {"role": "user", "content": user_text},
+            )
+            return self.planner_agent.ask(messages=messages, user=self.user_id)
+
+        if self.answerer_agent is None:
+            raise ValueError("answerer_agent is required when a non-planner prompt is selected.")
+
         messages = self._build_agent_messages(
             self.answerer_agent,
+            *self._build_course_workflow_messages(prompt_key),
             {"role": "system", "content": f"Selected prompt ({prompt_key}):\n{self.prompts[prompt_key]}"},
             *self._build_context_messages(context, turns),
             {"role": "user", "content": user_text},
@@ -272,14 +303,27 @@ class Chat:
             len(turns),
             len(turns_to_brief),
         )
-        briefer_prompt = (
+        briefing_sections = [
             "Condense the stored conversation context for future replies.\n"
-            "Keep important user facts, preferences, constraints, decisions, open threads, and unresolved tasks.\n"
-            "Value recent details more than old details.\n"
-            "Return only the condensed context text.\n\n"
-            f"Existing summary:\n{context.summary or '(none)'}\n\n"
-            f"Turns to condense:\n{self._render_turns_for_briefing(turns_to_brief)}"
+            "Keep important user facts, preferences, constraints, decisions, open threads, and unresolved tasks.",
+        ]
+        if self.topic_name:
+            briefing_sections.append(f"Current course topic:\n{self.topic_name}")
+        if self._has_course_planner():
+            briefing_sections.append(
+                "Course planning state to preserve:\n"
+                "- Do not lose the topic item list or progression.\n"
+                "- Preserve which items are covered, fully understood, partially understood, or still remaining.\n"
+                "- Keep any estimate of overall topic coverage and the next best item to teach."
+            )
+        briefing_sections.extend(
+            [
+                "Value recent details more than old details.\nReturn only the condensed context text.",
+                f"Existing summary:\n{context.summary or '(none)'}",
+                f"Turns to condense:\n{self._render_turns_for_briefing(turns_to_brief)}",
+            ]
         )
+        briefer_prompt = "\n\n".join(briefing_sections)
         condensed_context = self.briefer_agent.ask(briefer_prompt, user=self.user_id).strip()
         if not condensed_context:
             raise AgentResponseError("The briefer agent returned an empty condensed context.")
@@ -326,6 +370,47 @@ class Chat:
             built_messages.append({"role": "system", "content": agent.system})
         built_messages.extend(messages)
         return built_messages
+
+    def _build_routing_guidance(self) -> str:
+        guidance: list[str] = []
+        if "planner" in self.prompts:
+            guidance.append(
+                "- Use the planner prompt when the student asks what comes next, when they clearly mastered the current item, or when you need covered-versus-remaining topic progress."
+            )
+        if "judge" in self.prompts:
+            guidance.append("- Use the judge prompt when the student is attempting an answer that should be checked.")
+        if "teacher" in self.prompts:
+            guidance.append("- Use the teacher prompt when the student needs explanation, teaching, or more practice on the current item.")
+        return "\n".join(guidance)
+
+    def _build_course_workflow_messages(self, prompt_key: str) -> list[ChatMessage]:
+        if not self.topic_name and not self._has_course_planner():
+            return []
+
+        lines: list[str] = []
+        if self.topic_name:
+            lines.append(f"Current course topic: {self.topic_name}.")
+        if self._has_course_planner():
+            lines.extend(
+                [
+                    "Keep the conversation inside the current topic.",
+                    "Preserve which topic items are covered, mastered, in progress, and remaining.",
+                    "Use the planner route for choosing the next teaching item and reporting overall topic coverage.",
+                ]
+            )
+            if prompt_key == "teacher":
+                lines.append("Teach the current item without silently replacing the course plan.")
+            elif prompt_key == "judge":
+                lines.append("If the student has clearly mastered the current item, say so plainly so the next step can use the planner.")
+            elif prompt_key == "planner":
+                lines.append(
+                    "Act as the course planner: infer or maintain an ordered topic-item list, estimate how much is covered, identify what remains, and recommend the next teaching item."
+                )
+
+        return [{"role": "system", "content": "\n".join(lines)}]
+
+    def _has_course_planner(self) -> bool:
+        return "planner" in self.prompts or self.planner_agent is not None
 
     def _render_context_for_text(self, context: ChatContext, turns: Sequence[ChatTurn]) -> str:
         if not context.summary.strip() and not turns:
