@@ -5,7 +5,7 @@ from unittest.mock import Mock, patch
 from django.core.management import call_command
 from django.test import SimpleTestCase, TestCase, override_settings
 
-from chat_api.course_state import build_initial_course_state
+from chat_api.course_state import build_initial_course_state, serialize_course_state
 from chat_api.models import CourseTopic
 
 from .agents import Agent
@@ -196,9 +196,11 @@ class ChatTests(TestCase):
         briefer_agent=None,
         context_threshold_bytes=5_120,
         recent_turns_to_keep=10,
+        model_recent_turns=4,
         topic_name=None,
         planner_prompt=None,
         course_state=None,
+        topic_expectations=None,
     ):
         categorizer = categorizer_agent or RecordingAgent(model="categorizer", response_text="1")
         answerer = answerer_agent or RecordingAgent(model="answerer", response_text="agent reply")
@@ -212,9 +214,11 @@ class ChatTests(TestCase):
             briefer_agent=briefer_agent,
             context_threshold_bytes=context_threshold_bytes,
             recent_turns_to_keep=recent_turns_to_keep,
+            model_recent_turns=model_recent_turns,
             topic_name=topic_name,
             planner_prompt=planner_prompt,
             course_state=course_state,
+            topic_expectations=topic_expectations,
         )
 
     def test_create_session_initializes_a_context(self):
@@ -288,20 +292,18 @@ class ChatTests(TestCase):
         self.assertIn("Selected prompt (sales):", answerer.payloads[-1]["messages"][0]["content"])
 
     def test_reply_uses_planner_as_internal_guidance_for_answerer(self):
-        categorizer = RecordingAgent(model="categorizer", response_text="1")
         answerer = RecordingAgent(model="answerer", response_text="Teacher answer.")
         planner = RecordingAgent(
             model="planner",
             response_text=(
-                '{"summary":"Student can add 1 confidently.","current_item":"adding 1",'
-                '"next_item":"adding 2","reply_focus":"briefly transition to the next exercise",'
-                '"expectations":[{"expectation":"Add within 5","score":4,"evidence":"Answers adding 1 correctly without help."},'
-                '{"expectation":"Add within 10","score":1,"evidence":"Ready for the next step."}]}'
+                '{"score_updates":[{"expectation_index":0,"score":4},{"expectation_index":1,"score":1}],'
+                '"current_expectation_index":1,"next_expectation_index":1,"advance_to_next":false,'
+                '"review_indexes":[],"recent_evidence_summary":"Student can add 1 confidently.",'
+                '"reply_focus":"briefly transition to the next exercise"}'
             ),
             system="Plan the next item.",
         )
         chat = self.build_chat(
-            categorizer_agent=categorizer,
             answerer_agent=answerer,
             planner_agent=planner,
             topic_name="Elementary Math",
@@ -311,6 +313,7 @@ class ChatTests(TestCase):
             ],
             planner_prompt="Plan the next elementary math item.",
             course_state=build_initial_course_state(["Add within 5", "Add within 10"]),
+            topic_expectations=["Add within 5", "Add within 10"],
         )
 
         reply = chat.reply("I fully understand that now.", start_session=True)
@@ -321,15 +324,28 @@ class ChatTests(TestCase):
         self.assertEqual(planner_payload["messages"][0]["content"], "Plan the next item.")
         self.assertIn("Current course topic: Elementary Math.", planner_payload["messages"][1]["content"])
         self.assertIn("persisted course-state tracker", planner_payload["messages"][1]["content"])
-        self.assertIn('"expectation": "Add within 5"', planner_payload["messages"][2]["content"])
+        self.assertIn('"current_expectation": "Add within 5"', planner_payload["messages"][2]["content"])
         self.assertIn("Selected reply mode: teacher", planner_payload["messages"][-1]["content"])
-        self.assertIn(
-            "Internal planner note:\nOverall progress: 62%.",
-            answerer.payloads[-1]["messages"][2]["content"],
+        self.assertTrue(
+            any(
+                "Internal planner note:" in message["content"]
+                and "Current item: Add within 10." in message["content"]
+                and "Overall progress: 62%." in message["content"]
+                for message in answerer.payloads[-1]["messages"]
+                if message["role"] == "system"
+            )
         )
-        self.assertIn("Current item: adding 1.", answerer.payloads[-1]["messages"][2]["content"])
-        self.assertEqual(chat.course_state["overall_progress"], 62)
-        self.assertEqual(ChatSession.objects.get(pk=chat.session_id).course_state["overall_progress"], 62)
+        self.assertEqual(
+            serialize_course_state(chat.course_state, expectations=chat.topic_expectations)["overall_progress"],
+            62,
+        )
+        self.assertEqual(
+            serialize_course_state(
+                ChatSession.objects.get(pk=chat.session_id).course_state,
+                expectations=chat.topic_expectations,
+            )["overall_progress"],
+            62,
+        )
 
     def test_reply_does_not_expose_planner_route_to_categorizer(self):
         categorizer = RecordingAgent(model="categorizer", response_text="1", system="Pick a route.")
@@ -341,16 +357,12 @@ class ChatTests(TestCase):
                 ChatPrompt("judge", "Judge biology answers."),
             ],
             planner_prompt="Plan the next biology item.",
+            topic_expectations=["Cells", "Photosynthesis"],
         )
 
         chat.reply("What should I study next?", start_session=True)
 
-        categorizer_payload = categorizer.payloads[-1]
-        self.assertEqual(categorizer_payload["messages"][0]["content"], "Pick a route.")
-        self.assertIn("Current course topic:\nBiology Basics", categorizer_payload["messages"][1]["content"])
-        self.assertIn("1. Teach biology basics.", categorizer_payload["messages"][1]["content"])
-        self.assertIn("2. Judge biology answers.", categorizer_payload["messages"][1]["content"])
-        self.assertNotIn("Plan the next biology item.", categorizer_payload["messages"][1]["content"])
+        self.assertEqual(categorizer.payloads, [])
 
     def test_reply_continues_without_planner_note_when_internal_planner_raises(self):
         def raise_on_plan(_payload):
@@ -367,16 +379,18 @@ class ChatTests(TestCase):
             topic_name="Elementary Math",
             planner_prompt="Plan the next elementary math item.",
             course_state=build_initial_course_state(["Add within 5", "Add within 10"]),
+            topic_expectations=["Add within 5", "Add within 10"],
         )
 
         with self.assertLogs("ai_chat.chat", level="ERROR") as captured:
-            reply = chat.reply("yess", start_session=True)
+            reply = chat.reply("I understand this now.", start_session=True)
 
         self.assertEqual(reply, "Teacher answer.")
         self.assertIn("Internal planner guidance failed", "\n".join(captured.output))
         self.assertTrue(
             any(
-                "Internal planner note:\nOverall progress: 0%." in message["content"]
+                "Internal planner note:" in message["content"]
+                and "Current item: Add within 5." in message["content"]
                 for message in answerer.payloads[-1]["messages"]
                 if message["role"] == "system"
             )
@@ -453,10 +467,9 @@ class ChatTests(TestCase):
             planner_agent=RecordingAgent(
                 model="planner",
                 response_text=(
-                    '{"summary":"Moving through arithmetic.","current_item":"addition facts",'
-                    '"next_item":"subtraction facts","reply_focus":"teach with one worked example",'
-                    '"expectations":[{"expectation":"Add within 20","score":2,"evidence":"Needs prompts."},'
-                    '{"expectation":"Subtract within 20","score":0,"evidence":""}]}'
+                    '{"score_updates":[{"expectation_index":0,"score":2}],"current_expectation_index":0,'
+                    '"next_expectation_index":1,"advance_to_next":false,"review_indexes":[0],'
+                    '"recent_evidence_summary":"Needs prompts.","reply_focus":"teach with one worked example"}'
                 ),
             ),
             topic_name="Elementary Math",
@@ -466,6 +479,7 @@ class ChatTests(TestCase):
             ],
             planner_prompt="Plan arithmetic progression.",
             course_state=build_initial_course_state(["Add within 20", "Subtract within 20"]),
+            topic_expectations=["Add within 20", "Subtract within 20"],
             context_threshold_bytes=100_000,
             recent_turns_to_keep=1,
         )
@@ -478,9 +492,9 @@ class ChatTests(TestCase):
         briefing_text = briefer.payloads[-1]["messages"][-1]["content"]
         self.assertIn("Current course topic:\nElementary Math", briefing_text)
         self.assertIn("Course planning evidence to preserve:", briefing_text)
-        self.assertIn("session already stores expectation scores", briefing_text)
+        self.assertIn("compact progress state for the active item and next step", briefing_text)
         self.assertIn("Do not recreate the full expectation list", briefing_text)
-        self.assertIn("Persisted course state:\nOverall progress:", briefing_text)
+        self.assertIn("Persisted course state:\nCurrent item:", briefing_text)
 
     def test_compact_context_logs_decision_and_result(self):
         chat = self.build_chat(
@@ -513,9 +527,10 @@ class ChatTests(TestCase):
             planner_agent=RecordingAgent(
                 model="planner",
                 response_text=(
-                    '{"summary":"Student is halfway through number bonds.","current_item":"number bonds to 10",'
-                    '"next_item":"addition within 20","reply_focus":"check fluency with two problems",'
-                    '"expectations":[]}'
+                    '{"score_updates":[{"expectation_index":0,"score":1}],"current_expectation_index":0,'
+                    '"next_expectation_index":1,"advance_to_next":false,"review_indexes":[0],'
+                    '"recent_evidence_summary":"Student is halfway through number bonds.",'
+                    '"reply_focus":"check fluency with two problems"}'
                 ),
             ),
             prompts=[
@@ -525,6 +540,7 @@ class ChatTests(TestCase):
             topic_name=course_topic.name,
             planner_prompt=course_topic.planner_prompt,
             course_state=build_initial_course_state(course_topic.expectations),
+            topic_expectations=course_topic.expectations,
             context_threshold_bytes=100_000,
             recent_turns_to_keep=1,
         )
@@ -543,24 +559,21 @@ class ChatTests(TestCase):
         briefing_text = briefer.payloads[-1]["messages"][-1]["content"]
         self.assertIn("Current course topic:\nElementary Math", briefing_text)
         self.assertIn("Course planning evidence to preserve:", briefing_text)
-        self.assertIn("Persisted course state:\nOverall progress:", briefing_text)
+        self.assertIn("Persisted course state:\nCurrent item:", briefing_text)
 
-    def test_reply_does_not_fail_when_auto_compaction_raises(self):
-        def raise_on_brief(_payload):
-            raise RuntimeError("briefing failed")
-
+    def test_reply_does_not_auto_compact_context(self):
+        briefer = RecordingAgent(model="briefer", response_text="unused")
         chat = self.build_chat(
-            briefer_agent=RecordingAgent(model="briefer", responder=raise_on_brief),
+            briefer_agent=briefer,
             context_threshold_bytes=1,
             recent_turns_to_keep=1,
         )
 
         chat.reply("first message", start_session=True)
-        with self.assertLogs("ai_chat.chat", level="ERROR"):
-            reply = chat.reply("second message")
+        reply = chat.reply("second message")
 
         self.assertEqual(reply, "agent reply")
-        self.assertEqual(ChatTurn.objects.filter(session_id=chat.session_id).count(), 2)
+        self.assertEqual(briefer.payloads, [])
 
 
 class CompactChatContextsCommandTests(TestCase):

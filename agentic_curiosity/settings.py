@@ -13,7 +13,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 import os
 from pathlib import Path
 
-from .env import env_bool, env_list, load_env_file
+from .env import env_bool, env_int, env_list, load_env_file
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -38,10 +38,12 @@ OPENAI_ORGANIZATION = os.environ.get('OPENAI_ORGANIZATION')
 OPENAI_PROJECT = os.environ.get('OPENAI_PROJECT')
 OPENAI_BASE_URL = os.environ.get('OPENAI_BASE_URL')
 AI_CHAT_MODEL = os.environ.get('AI_CHAT_MODEL')
-AI_CHAT_CATEGORIZER_MODEL = os.environ.get('AI_CHAT_CATEGORIZER_MODEL')
 AI_CHAT_ANSWERER_MODEL = os.environ.get('AI_CHAT_ANSWERER_MODEL')
 AI_CHAT_PLANNER_MODEL = os.environ.get('AI_CHAT_PLANNER_MODEL')
 AI_CHAT_BRIEFER_MODEL = os.environ.get('AI_CHAT_BRIEFER_MODEL')
+AI_CHAT_CONTEXT_THRESHOLD_BYTES = env_int('AI_CHAT_CONTEXT_THRESHOLD_BYTES', default=5_120)
+AI_CHAT_RECENT_TURNS_TO_KEEP = env_int('AI_CHAT_RECENT_TURNS_TO_KEEP', default=10)
+AI_CHAT_MODEL_RECENT_TURNS = env_int('AI_CHAT_MODEL_RECENT_TURNS', default=4)
 AI_CHAT_LOG_LEVEL = os.environ.get('AI_CHAT_LOG_LEVEL', 'INFO')
 
 

@@ -9,7 +9,6 @@ from ai_chat.models import ChatContext, ChatSession
 from .course_state import build_initial_course_state, normalize_course_state
 from .models import CourseTopic
 
-DEFAULT_CATEGORIZER_MODEL = "gpt-5-mini"
 DEFAULT_ANSWERER_MODEL = "gpt-5.4-mini"
 DEFAULT_PLANNER_MODEL = "gpt-5-mini"
 DEFAULT_BRIEFER_MODEL = "gpt-5-mini"
@@ -72,10 +71,7 @@ def build_chat(
 ) -> Chat:
     threshold_bytes = getattr(settings, "AI_CHAT_CONTEXT_THRESHOLD_BYTES", 5_120)
     recent_turns = getattr(settings, "AI_CHAT_RECENT_TURNS_TO_KEEP", 10)
-    categorizer_model = _resolve_agent_model(
-        "AI_CHAT_CATEGORIZER_MODEL",
-        default_model=DEFAULT_CATEGORIZER_MODEL,
-    )
+    model_recent_turns = getattr(settings, "AI_CHAT_MODEL_RECENT_TURNS", 4)
     answerer_model = _resolve_agent_model(
         "AI_CHAT_ANSWERER_MODEL",
         default_model=DEFAULT_ANSWERER_MODEL,
@@ -111,12 +107,6 @@ def build_chat(
             ChatPrompt("teacher", resolved_course_topic.teacher_prompt),
             ChatPrompt("judge", resolved_course_topic.judge_prompt),
         ],
-        categorizer_agent=OpenAIAgent(
-            system=resolved_course_topic.categorizer_prompt,
-            request_defaults={
-                "model": categorizer_model,
-            },
-        ),
         answerer_agent=OpenAIAgent(
             system=resolved_course_topic.answerer_prompt,
             request_defaults={
@@ -137,6 +127,8 @@ def build_chat(
         ),
         context_threshold_bytes=threshold_bytes,
         recent_turns_to_keep=recent_turns,
+        model_recent_turns=model_recent_turns,
         planner_prompt=resolved_course_topic.planner_prompt,
         course_state=resolved_course_state,
+        topic_expectations=getattr(resolved_course_topic, "expectations", []),
     )

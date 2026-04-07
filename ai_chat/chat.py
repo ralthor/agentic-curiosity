@@ -9,7 +9,13 @@ from dataclasses import dataclass
 from django.db import transaction
 from django.utils import timezone
 
-from chat_api.course_state import build_course_state_note, normalize_course_state
+from chat_api.course_state import (
+    apply_course_state_patch,
+    build_active_course_state_payload,
+    build_course_state_note,
+    normalize_course_state,
+    normalize_expectations,
+)
 
 from .agents import Agent, ChatMessage
 from .exceptions import AgentResponseError
@@ -48,14 +54,18 @@ class Chat:
         briefer_agent: Agent | None = None,
         context_threshold_bytes: int = 5_120,
         recent_turns_to_keep: int = 10,
+        model_recent_turns: int = 4,
         topic_name: str | None = None,
         planner_prompt: str | None = None,
         course_state: dict[str, object] | None = None,
+        topic_expectations: Sequence[str] | None = None,
     ) -> None:
         if context_threshold_bytes <= 0:
             raise ValueError("context_threshold_bytes must be greater than zero.")
         if recent_turns_to_keep <= 0:
             raise ValueError("recent_turns_to_keep must be greater than zero.")
+        if model_recent_turns <= 0:
+            raise ValueError("model_recent_turns must be greater than zero.")
 
         self.user_id = str(user_id)
         self.session_id = session_id
@@ -66,9 +76,11 @@ class Chat:
         self.briefer_agent = briefer_agent
         self.context_threshold_bytes = context_threshold_bytes
         self.recent_turns_to_keep = recent_turns_to_keep
+        self.model_recent_turns = model_recent_turns
         self.topic_name = topic_name.strip() if isinstance(topic_name, str) and topic_name.strip() else None
         self.planner_prompt = planner_prompt.strip() if isinstance(planner_prompt, str) and planner_prompt.strip() else None
-        self.course_state = normalize_course_state(course_state)
+        self.topic_expectations = normalize_expectations(topic_expectations or [])
+        self.course_state = normalize_course_state(course_state, expectations=self.topic_expectations)
 
     @classmethod
     def create_session(cls, *, user_id: str | int) -> ChatSession:
@@ -82,8 +94,6 @@ class Chat:
         cleaned_text = text.strip()
         if not cleaned_text:
             raise ValueError("text must not be blank.")
-        if self.categorizer_agent is None:
-            raise ValueError("categorizer_agent is required to send a reply.")
         if self.answerer_agent is None:
             raise ValueError("answerer_agent is required to send a reply.")
         if not self.prompts:
@@ -106,14 +116,15 @@ class Chat:
             len(turns),
             len(context.summary),
         )
-        prompt_key = self._categorize_prompt_key(cleaned_text, context, turns)
+        model_turns = self._get_model_turns(turns)
+        prompt_key = self._select_prompt_key(cleaned_text, context, model_turns)
         response, updated_course_state = self._generate_response(
             prompt_key=prompt_key,
             user_text=cleaned_text,
             context=context,
-            turns=turns,
+            turns=model_turns,
         )
-        self.course_state = normalize_course_state(updated_course_state)
+        self.course_state = normalize_course_state(updated_course_state, expectations=self.topic_expectations)
 
         with transaction.atomic():
             session = ChatSession.objects.select_for_update().get(pk=session.pk, user_id=self.user_id)
@@ -137,12 +148,6 @@ class Chat:
             prompt_key,
             len(response),
         )
-
-        if self.briefer_agent is not None:
-            try:
-                self.compact_context(force=False)
-            except Exception:
-                logger.exception("Automatic context compaction failed for session %s.", self.session_id)
 
         return response
 
@@ -188,9 +193,11 @@ class Chat:
                 briefer_agent=briefer_agent,
                 context_threshold_bytes=context_threshold_bytes,
                 recent_turns_to_keep=recent_turns_to_keep,
+                model_recent_turns=min(recent_turns_to_keep, 4),
                 topic_name=course_topic.name if course_topic is not None else None,
                 planner_prompt=course_topic.planner_prompt if course_topic is not None else None,
                 course_state=context.session.course_state,
+                topic_expectations=course_topic.expectations if course_topic is not None else None,
             )
             if chat._manage_context(context, force=False):
                 compacted_count += 1
@@ -225,6 +232,37 @@ class Chat:
         if context.compacted_through_turn_id is not None:
             turns = turns.filter(id__gt=context.compacted_through_turn_id)
         return list(turns.order_by("created_at", "id"))
+
+    def _select_prompt_key(self, user_text: str, context: ChatContext, turns: Sequence[ChatTurn]) -> str:
+        if self._can_route_course_prompts_locally():
+            if "judge" in self.prompts and self._looks_like_answer_attempt(user_text, turns):
+                logger.info(
+                    "Selected prompt %s for user %s session %s via local routing.",
+                    "judge",
+                    self.user_id,
+                    context.session_id,
+                )
+                return "judge"
+
+            logger.info(
+                "Selected prompt %s for user %s session %s via local routing.",
+                "teacher",
+                self.user_id,
+                context.session_id,
+            )
+            return "teacher"
+
+        if self.categorizer_agent is None:
+            first_prompt_key = next(iter(self.prompts))
+            logger.info(
+                "Selected prompt %s for user %s session %s by fallback default.",
+                first_prompt_key,
+                self.user_id,
+                context.session_id,
+            )
+            return first_prompt_key
+
+        return self._categorize_prompt_key(user_text, context, turns)
 
     def _categorize_prompt_key(self, user_text: str, context: ChatContext, turns: Sequence[ChatTurn]) -> str:
         prompt_options = "\n".join(
@@ -298,7 +336,7 @@ class Chat:
         context: ChatContext,
         turns: Sequence[ChatTurn],
     ) -> PlannerGuidance:
-        if self.planner_agent is None:
+        if self.planner_agent is None or not self._should_run_planner(prompt_key=prompt_key, user_text=user_text):
             return self._fallback_planner_guidance()
 
         messages = self._build_agent_messages(
@@ -363,11 +401,14 @@ class Chat:
         if self._has_course_planner():
             briefing_sections.append(
                 "Course planning evidence to preserve:\n"
-                "- The session already stores expectation scores, overall progress, and the current and next teaching items.\n"
-                "- Preserve only the mistakes, evidence of understanding, blockers, and recent transitions that justify those tracked scores and next steps.\n"
-                "- Do not recreate the full expectation list, score table, or full course outline in the condensed summary."
+                "- The session already stores compact progress state for the active item and next step.\n"
+                "- Preserve only the mistakes, evidence of understanding, blockers, and recent transitions that justify those tracked decisions.\n"
+                "- Do not recreate the full expectation list or a full course outline in the condensed summary."
             )
-            course_state_note = build_course_state_note(self.course_state)
+            course_state_note = build_course_state_note(
+                self.course_state,
+                expectations=self.topic_expectations,
+            )
             if course_state_note:
                 briefing_sections.append(f"Persisted course state:\n{course_state_note}")
         briefing_sections.extend(
@@ -444,7 +485,7 @@ class Chat:
             lines.extend(
                 [
                     "Keep the conversation inside the current topic.",
-                    "Use the planner and tracked course state only as internal guidance for continuity, progress scoring, and the next teaching step.",
+                    "Use the planner and tracked course state only as internal guidance for the current item, progress scoring, and the next teaching step.",
                     "Do not expose internal planning notes or a full course outline unless the student explicitly asks.",
                 ]
             )
@@ -461,7 +502,7 @@ class Chat:
         return (
             self.planner_prompt is not None
             or self.planner_agent is not None
-            or bool(self.course_state.get("expectations"))
+            or bool(self.topic_expectations)
         )
 
     def _build_internal_planner_messages(self, prompt_key: str) -> list[ChatMessage]:
@@ -469,12 +510,13 @@ class Chat:
             "This planner output updates the persisted course-state tracker for the tutor and must not be written as student-facing prose.",
             "Return only valid JSON and no surrounding commentary or code fences.",
             (
-                'Use this exact schema: {"summary":"...","current_item":"...","next_item":"...","reply_focus":"...",'
-                '"expectations":[{"expectation":"<unchanged text>","score":0,"evidence":"..."}]}.'
+                'Use this exact schema: {"score_updates":[{"expectation_index":0,"score":0}],"current_expectation_index":0,'
+                '"next_expectation_index":0,"advance_to_next":false,"review_indexes":[0],"recent_evidence_summary":"...",'
+                '"reply_focus":"..."}.'
             ),
-            "Keep the expectation list in the same order and do not invent, rename, or remove expectations.",
+            "Only update expectation indexes that are already present in the active window or current item.",
             "Use score 0-4 where 0=not started, 1=introduced, 2=developing, 3=secure, and 4=mastered.",
-            "Keep summary, reply_focus, and each evidence note brief.",
+            "Keep recent_evidence_summary and reply_focus brief.",
         ]
         if self.topic_name:
             lines.append(f"Current course topic: {self.topic_name}.")
@@ -491,28 +533,28 @@ class Chat:
                 f"Selected reply mode: {prompt_key}",
                 f"Latest user message: {user_text}",
                 "",
-                "Update the course state for this turn, keeping expectation scores aligned to the stored list.",
-                "Use the latest user message plus the conversation context as evidence.",
-                "Return only the JSON object.",
+                "Update only the compact course-state fields that changed on this turn.",
+                "Use the latest user message plus the recent conversation context as evidence.",
+                "Return only the JSON patch object.",
             ]
         )
 
     def _build_course_state_messages(self) -> list[ChatMessage]:
-        if not self.course_state.get("expectations"):
+        if not self.topic_expectations:
             return []
 
         return [
             {
                 "role": "system",
                 "content": (
-                    "Current persisted course state:\n"
-                    f"{json.dumps(self.course_state, indent=2, ensure_ascii=True)}"
+                    "Current active course state:\n"
+                    f"{json.dumps(build_active_course_state_payload(self.course_state, expectations=self.topic_expectations), indent=2, ensure_ascii=True)}"
                 ),
             }
         ]
 
     def _fallback_planner_guidance(self) -> PlannerGuidance:
-        note = build_course_state_note(self.course_state)
+        note = build_course_state_note(self.course_state, expectations=self.topic_expectations)
         return PlannerGuidance(note=note or None, course_state=self.course_state)
 
     def _parse_planner_guidance(self, raw_guidance: str) -> PlannerGuidance:
@@ -520,13 +562,58 @@ class Chat:
         if not isinstance(parsed, dict):
             raise AgentResponseError("The planner agent must return a JSON object.")
 
-        expectations = [item["expectation"] for item in self.course_state.get("expectations", [])]
-        course_state = normalize_course_state(
+        course_state = apply_course_state_patch(
+            self.course_state,
             parsed,
-            expectations=expectations or None,
+            expectations=self.topic_expectations,
         )
-        note = build_course_state_note(course_state)
+        note = build_course_state_note(course_state, expectations=self.topic_expectations)
         return PlannerGuidance(note=note or None, course_state=course_state)
+
+    def _can_route_course_prompts_locally(self) -> bool:
+        prompt_keys = set(self.prompts)
+        return "teacher" in prompt_keys and prompt_keys.issubset({"teacher", "judge"})
+
+    def _looks_like_answer_attempt(self, user_text: str, turns: Sequence[ChatTurn]) -> bool:
+        lowered = user_text.strip().casefold()
+        if not lowered:
+            return False
+        if "?" in lowered:
+            return False
+        if re.match(r"^(what|how|why|when|where|who|teach|explain|show|help|give|can|could|would|should)\b", lowered):
+            return False
+        if re.search(r"\b(progress|what next|next topic|move on|review)\b", lowered):
+            return False
+        if re.search(r"\b(my answer|answer is|i think|it's|it is|because|true|false)\b", lowered):
+            return True
+        if re.match(r"^(yes+|yep|yeah|no+)\b", lowered):
+            return True
+        if re.search(r"^\s*[-+]?\d+(?:\s*[-+*/=]\s*[-+]?\d+)+\s*$", lowered):
+            return True
+        if re.search(r"^\s*[-+]?\d+(?:\.\d+)?\s*$", lowered):
+            return True
+        if turns and turns[-1].prompt_key == "teacher" and len(lowered) <= 80:
+            return True
+        return False
+
+    def _should_run_planner(self, *, prompt_key: str, user_text: str) -> bool:
+        if not self.topic_expectations:
+            return False
+        if prompt_key == "judge":
+            return True
+
+        lowered = user_text.casefold()
+        return bool(
+            re.search(
+                r"\b(progress|what next|what should i study next|next item|move on|ready to move on|review|mastered|understand|got it|ready|finished|done)\b",
+                lowered,
+            )
+        )
+
+    def _get_model_turns(self, turns: Sequence[ChatTurn]) -> list[ChatTurn]:
+        if len(turns) <= self.model_recent_turns:
+            return list(turns)
+        return list(turns[-self.model_recent_turns :])
 
     def _strip_json_fence(self, raw_guidance: str) -> str:
         stripped = raw_guidance.strip()

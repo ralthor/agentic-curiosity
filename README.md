@@ -1,12 +1,12 @@
 # Agentic Curiosity
 
-Minimal Django project for experimenting with provider-neutral chat agents and persisted multi-agent conversations.
+Minimal Django project for experimenting with provider-neutral chat agents and persisted chat sessions for tutoring workflows.
 
 The repository currently contains:
 
 - A reusable `ai_chat.Agent` base class with an OpenAI-style request contract.
 - An `OpenAIAgent` adapter backed by the OpenAI Chat Completions API.
-- A persisted `Chat` orchestration class that routes user messages, tracks per-session course progress, stores all turns, and compacts long-running context.
+- A persisted `Chat` orchestration class that routes tutoring turns, tracks compact per-session course progress, stores all turns, and compacts long-running context.
 - A `chat_api` app with Django-authenticated token issuance, course-topic management, and session-based chat endpoints.
 - A `core` app with a browser chat console at `/` and a course-topic management page at `/course-topics/`.
 - Admin support for chat sessions, turns, contexts, API tokens, and course topics.
@@ -45,10 +45,12 @@ Supported settings:
 - `OPENAI_PROJECT`
 - `OPENAI_BASE_URL`
 - `AI_CHAT_MODEL`
-- `AI_CHAT_CATEGORIZER_MODEL`
 - `AI_CHAT_ANSWERER_MODEL`
 - `AI_CHAT_PLANNER_MODEL`
 - `AI_CHAT_BRIEFER_MODEL`
+- `AI_CHAT_CONTEXT_THRESHOLD_BYTES`
+- `AI_CHAT_RECENT_TURNS_TO_KEEP`
+- `AI_CHAT_MODEL_RECENT_TURNS`
 - `AI_CHAT_LOG_LEVEL`
 
 Minimal `.env` example:
@@ -66,7 +68,7 @@ Core pieces:
 
 - `ai_chat.Agent`: provider-neutral base class. `ask()` is text-in/text-out, `create()` preserves an OpenAI-shaped payload.
 - `ai_chat.OpenAIAgent`: concrete provider adapter using the OpenAI SDK.
-- `ai_chat.Chat`: orchestrates categorization, planner-driven course-state updates, answering, persistence, and context management.
+- `ai_chat.Chat`: orchestrates prompt routing, conditional planner updates, answering, persistence, and context management.
 - `ai_chat.ChatPrompt`: prompt key/text pair accepted by `Chat`.
 
 Persistent storage:
@@ -77,27 +79,28 @@ Persistent storage:
 
 Each of these records includes `created_at` and `updated_at` timestamps.
 
-Prompt storage:
+Prompt and progress storage:
 
 - `chat_api.CourseTopic`: named bundle containing `teacher`, `judge`, `categorizer`, `answerer`, `planner`, and `briefer` prompts plus an ordered `expectations` list.
 - `ChatSession.course_topic`: frozen topic selection for that session so later retrieval cannot silently change prompt behavior.
-- `ChatSession.course_state`: session-local expectation scores, overall progress, current item, next item, and planner summary.
+- `ChatSession.course_state`: compact internal session state containing per-expectation scores, active indexes, review indexes, recent evidence, and reply focus. API responses serialize that into a richer derived view.
 
 ## How `Chat` Works
 
 For each incoming user message:
 
 1. The chat loads the selected session's context from the database.
-2. A categorizer agent sees numbered short descriptions of the available prompts and returns the best prompt number.
-3. A planner agent updates the session's expectation scores, progress, current item, and next item using the stored topic expectations plus the latest turn context.
-4. An answerer agent receives the selected prompt, the current context, and the planner's internal course-state note.
-5. The user message and the agent response are both stored as a `ChatTurn`, and the updated `course_state` is persisted on the session.
-6. If a briefer agent is configured and the context is too large, the chat can compact older context after responding.
+2. For the standard course flow with `teacher` and `judge` prompts, `Chat` routes locally: short answer attempts go to `judge`, while explanation or practice requests go to `teacher`.
+3. If the prompt set is not the standard course pair, `Chat` can still use an optional categorizer agent to choose the prompt.
+4. The planner runs only on assessment or transition turns. It receives a compact active-window payload and returns a JSON patch rather than rewriting the full course state.
+5. The answerer receives the selected prompt, the compact planner note, the stored summary, and only the most recent turns instead of the full history.
+6. The user message and the agent response are stored as a `ChatTurn`, and the updated `course_state` is persisted on the session.
+7. Context compaction is available through `compact_context()` or the management command; it is not part of the normal reply hot path.
 
 Each session keeps its own isolated history and compacted context.
 The `start_session` flag starts a fresh session for the current `Chat` instance.
 
-Prompt keys stay internal. The categorizer only sees short prompt descriptions derived from each prompt's text, and `Chat` maps the returned number back to the stored key.
+Prompt keys stay internal. When a categorizer is used, it only sees short prompt descriptions derived from each prompt's text, and `Chat` maps the returned number back to the stored key.
 
 ## Example Usage
 
@@ -110,14 +113,14 @@ uv run python manage.py shell
 ```python
 from ai_chat import Chat, OpenAIAgent
 
-categorizer = OpenAIAgent(
-    model="gpt-4.1-mini",
-    system="Choose the best prompt number and return only that number.",
-)
-
 answerer = OpenAIAgent(
     model="gpt-4.1-mini",
-    system="Answer clearly and directly.",
+    system="Tutor clearly and directly.",
+)
+
+planner = OpenAIAgent(
+    model="gpt-4.1-mini",
+    system="Update the compact course-state tracker with a JSON patch.",
 )
 
 briefer = OpenAIAgent(
@@ -128,18 +131,26 @@ briefer = OpenAIAgent(
 chat = Chat(
     user_id="user-123",
     prompts={
-        "support": "Help the user with product and troubleshooting questions.",
-        "sales": "Help the user with plans, pricing, and commercial questions.",
+        "teacher": "Teach one elementary math idea at a time.",
+        "judge": "Judge the student's latest elementary math answer.",
     },
-    categorizer_agent=categorizer,
     answerer_agent=answerer,
+    planner_agent=planner,
     briefer_agent=briefer,
+    topic_name="Elementary Math",
+    planner_prompt="Track progress through the elementary math expectations.",
+    topic_expectations=[
+        "Count forward and backward within 20.",
+        "Add within 20 using objects, drawings, or equations.",
+    ],
 )
 
-response = chat.reply("I need help resetting my account password.", start_session=True)
+response = chat.reply("Can you show me how 2 + 3 works?", start_session=True)
 print(response)
 print(chat.session_id)
 ```
+
+For non-course prompt bundles such as `support` and `sales`, pass a `categorizer_agent` if you want the model to choose among more than the standard `teacher` and `judge` routes.
 
 ## Chat API
 
@@ -156,7 +167,8 @@ Available routes:
 - `POST /api/chat/chat/`: accepts `session_id` and `text`, checks that the session belongs to the token owner, and returns the chat response plus the updated `course_state`.
 
 New sessions always use the selected `CourseTopic`, and that topic stays fixed for the life of the session.
-The seeded default topic is `Elementary Math`, including an expectation list that the planner can score from `0` to `4` per item.
+The seeded default topic is `Elementary Math`, including an expectation list that the planner scores from `0` to `4` per item.
+The `categorizer_prompt` field is still stored on `CourseTopic` for compatibility and custom prompt bundles, but the standard `teacher`/`judge` course flow routes locally without a categorizer model call.
 
 Example flow:
 
@@ -194,9 +206,9 @@ curl -X POST http://127.0.0.1:8000/api/chat/course-topics/ \
     "name":"Elementary Math",
     "teacher_prompt":"You are a patient elementary math teacher. Teach one small idea at a time in simple language, use short worked examples, and end most teaching turns with a quick check for understanding.",
     "judge_prompt":"You are checking a student'\''s elementary math answer. Say whether it is correct, explain the reasoning simply, and point out the next correction or reinforcement step.",
-    "categorizer_prompt":"Choose the best prompt number for the next elementary math tutoring reply. Use the judge prompt when the student is attempting an answer. Use the teacher prompt when the student needs explanation, a worked example, or more practice. Return only the number.",
+    "categorizer_prompt":"Choose the best prompt number for the next reply when this topic is used with non-standard prompt bundles. Return only the number.",
     "answerer_prompt":"You are an elementary math tutor. Follow the selected prompt exactly, stay inside the current course topic, and keep the language concise, clear, and age-appropriate.",
-    "planner_prompt":"You are the internal course planner for elementary math. Update the student'\''s expectation scores, estimate progress through the expectation list, and recommend the best current item and next item without leaving the topic.",
+    "planner_prompt":"You are the internal course planner for elementary math. Update only the compact active-window course state, keep scores from 0 to 4, and return a JSON patch for the current item, next item, evidence summary, and reply focus.",
     "briefer_prompt":"Condense the elementary math tutoring session. Keep the concepts covered, the student'\''s mistakes, evidence that affects expectation scores, and the next teaching step.",
     "expectations":[
       "Count forward and backward within 20.",
@@ -212,13 +224,15 @@ curl -X POST http://127.0.0.1:8000/api/chat/course-topics/ \
 ## Context Compaction
 
 `Chat` keeps recent turns as structured conversation and can compress older context into a shorter summary.
+Model calls only receive the stored summary plus the most recent turns.
 
 Default behavior:
 
 - Compaction threshold: `5120` bytes
 - Recent turns kept verbatim: `10`
+- Recent turns sent to the model: `4`
 
-The compaction logic is designed to keep current-session continuity intact while shrinking older history.
+The compaction logic is designed to keep current-session continuity intact while shrinking older history, and it runs outside the normal reply path unless you call it explicitly.
 
 You can trigger compaction from code:
 

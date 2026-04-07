@@ -48,3 +48,14 @@ def env_list(name: str, *, default: Sequence[str] | None = None, separator: str 
         return list(default or [])
 
     return [item.strip() for item in value.split(separator) if item.strip()]
+
+
+def env_int(name: str, *, default: int) -> int:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+
+    try:
+        return int(value.strip())
+    except (TypeError, ValueError):
+        return default

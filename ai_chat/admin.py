@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from chat_api.course_state import normalize_course_state
+from chat_api.course_state import serialize_course_state
 
 from .models import ChatContext, ChatSession, ChatTurn
 
@@ -14,7 +14,7 @@ class ChatSessionAdmin(admin.ModelAdmin):
 
     @admin.display(description="Progress")
     def course_progress(self, obj: ChatSession) -> str:
-        state = normalize_course_state(
+        state = serialize_course_state(
             obj.course_state,
             expectations=obj.course_topic.expectations if obj.course_topic is not None else None,
         )

@@ -9,7 +9,7 @@
 
 ## Django Project Package
 
-- `agentic_curiosity/settings.py`: Global Django settings. Uses SQLite, includes `core`, `ai_chat`, and `chat_api`, and configures console logging for the `ai_chat` logger through `AI_CHAT_LOG_LEVEL`.
+- `agentic_curiosity/settings.py`: Global Django settings. Uses SQLite, includes `core`, `ai_chat`, and `chat_api`, and exposes chat model/context knobs such as `AI_CHAT_MODEL`, `AI_CHAT_MODEL_RECENT_TURNS`, and `AI_CHAT_LOG_LEVEL`.
 - `agentic_curiosity/urls.py`: Root URL config. Routes `""` to `core.urls`, `/api/chat/` to `chat_api.urls`, and `/admin/` to Django admin.
 - `agentic_curiosity/asgi.py` and `agentic_curiosity/wsgi.py`: Standard Django entry points.
 
@@ -27,7 +27,7 @@
 
 - `ai_chat/__init__.py`: Public exports for the app.
 - `ai_chat/agents.py`: Provider-agnostic `Agent` base class. Shared logic lives here.
-- `ai_chat/chat.py`: Persisted multi-agent orchestration, prompt routing, turn storage, and context compaction.
+- `ai_chat/chat.py`: Persisted chat orchestration, including local teacher/judge routing for course flows, conditional planner updates, turn storage, and context compaction.
 - `ai_chat/models.py`: Persisted chat tables: `ChatSession`, `ChatTurn`, and `ChatContext`.
 - `ai_chat/admin.py`: Django admin registration for sessions, turns, and context.
 - `ai_chat/openai_agent.py`: `OpenAIAgent` implementation using the OpenAI SDK chat completions client.
@@ -36,8 +36,8 @@
 
 ### `chat_api`
 
-- `chat_api/models.py`: `ApiToken` plus `CourseTopic`, which stores the five prompt texts used by the web/API flow.
-- `chat_api/services.py`: Bridges HTTP/session workflow to `ai_chat.Chat`, including prompt resolution from a session's locked `CourseTopic`.
+- `chat_api/models.py`: `ApiToken` plus `CourseTopic`, which stores the course prompt bundle and ordered `expectations` list.
+- `chat_api/services.py`: Bridges HTTP/session workflow to `ai_chat.Chat`, including prompt resolution from a session's locked `CourseTopic` and compact course-state initialization.
 - `chat_api/views.py`: Token-authenticated JSON endpoints for login, token issuance, course topics, session creation, session lookup, and chat replies.
 - `chat_api/urls.py`: Routes under `/api/chat/`.
 - `chat_api/admin.py`: Django admin registration for API tokens and course topics.

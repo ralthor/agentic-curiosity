@@ -8,7 +8,7 @@ from django.test import SimpleTestCase, TestCase, override_settings
 from ai_chat import Agent, Chat, ChatPrompt
 from ai_chat.models import ChatContext, ChatSession, ChatTurn
 
-from .course_state import build_initial_course_state
+from .course_state import build_initial_course_state, serialize_course_state
 from .models import ApiToken, CourseTopic
 from .services import build_chat, create_session as create_topic_session
 
@@ -111,14 +111,20 @@ class ChatApiTests(TestCase):
         self.assertEqual(session.user_id, str(self.user.pk))
         self.assertEqual(session.course_topic, self.course_topic)
         self.assertTrue(ChatContext.objects.filter(session=session).exists())
-        self.assertEqual(session.course_state["overall_progress"], 0)
+        self.assertEqual(
+            serialize_course_state(session.course_state, expectations=self.course_topic.expectations)["overall_progress"],
+            0,
+        )
         self.assertEqual(
             response.json()["course_topic"],
             {"id": self.course_topic.pk, "name": self.course_topic.name},
         )
         self.assertEqual(
             response.json()["course_state"],
-            build_initial_course_state(self.course_topic.expectations),
+            serialize_course_state(
+                build_initial_course_state(self.course_topic.expectations),
+                expectations=self.course_topic.expectations,
+            ),
         )
 
     def test_course_topics_endpoint_lists_existing_topics(self):
@@ -178,7 +184,10 @@ class ChatApiTests(TestCase):
         )
         self.assertEqual(
             response.json()["course_state"],
-            build_initial_course_state(self.course_topic.expectations),
+            serialize_course_state(
+                build_initial_course_state(self.course_topic.expectations),
+                expectations=self.course_topic.expectations,
+            ),
         )
 
     def test_chat_rejects_sessions_owned_by_another_user(self):
@@ -215,6 +224,7 @@ class ChatApiTests(TestCase):
                     response_text="Correct. 2 + 2 = 4. Did you understand?",
                 ),
                 course_state=session.course_state,
+                topic_expectations=course_topic.expectations,
             )
 
         with patch("chat_api.views.build_chat", side_effect=build_test_chat):
@@ -230,7 +240,10 @@ class ChatApiTests(TestCase):
             {
                 "session_id": session.pk,
                 "response": "Correct. 2 + 2 = 4. Did you understand?",
-                "course_state": build_initial_course_state(self.course_topic.expectations),
+                "course_state": serialize_course_state(
+                    build_initial_course_state(self.course_topic.expectations),
+                    expectations=self.course_topic.expectations,
+                ),
             },
         )
         turn = ChatTurn.objects.get(session=session)
@@ -242,7 +255,6 @@ class ChatApiTests(TestCase):
 class ChatApiServiceTests(SimpleTestCase):
     @override_settings(
         AI_CHAT_MODEL=None,
-        AI_CHAT_CATEGORIZER_MODEL=None,
         AI_CHAT_ANSWERER_MODEL=None,
         AI_CHAT_PLANNER_MODEL=None,
         AI_CHAT_BRIEFER_MODEL=None,
@@ -269,11 +281,10 @@ class ChatApiServiceTests(SimpleTestCase):
                 ),
             )
 
-        self.assertEqual(chat.categorizer_agent["request_defaults"]["model"], "gpt-5-mini")
+        self.assertIsNone(chat.categorizer_agent)
         self.assertEqual(chat.answerer_agent["request_defaults"]["model"], "gpt-5.4-mini")
         self.assertEqual(chat.planner_agent["request_defaults"]["model"], "gpt-5-mini")
         self.assertEqual(chat.briefer_agent["request_defaults"]["model"], "gpt-5-mini")
-        self.assertNotIn("temperature", chat.categorizer_agent["request_defaults"])
         self.assertNotIn("temperature", chat.answerer_agent["request_defaults"])
         self.assertNotIn("temperature", chat.planner_agent["request_defaults"])
         self.assertNotIn("temperature", chat.briefer_agent["request_defaults"])
@@ -282,12 +293,14 @@ class ChatApiServiceTests(SimpleTestCase):
         self.assertNotIn("planner", chat.prompts)
         self.assertEqual(chat.planner_prompt, "Plan arithmetic progression.")
         self.assertEqual(chat.topic_name, "Arithmetic")
-        self.assertEqual(chat.course_state["overall_progress"], 0)
-        self.assertEqual(len(chat.course_state["expectations"]), 2)
+        self.assertEqual(
+            serialize_course_state(chat.course_state, expectations=["Add within 20 using objects, drawings, or equations.", "Subtract within 20 using objects, drawings, or equations."])["overall_progress"],
+            0,
+        )
+        self.assertEqual(len(chat.course_state["scores"]), 2)
 
     @override_settings(
         AI_CHAT_MODEL="shared-model",
-        AI_CHAT_CATEGORIZER_MODEL="categorizer-model",
         AI_CHAT_ANSWERER_MODEL=None,
         AI_CHAT_PLANNER_MODEL="planner-model",
         AI_CHAT_BRIEFER_MODEL="briefer-model",
@@ -311,14 +324,16 @@ class ChatApiServiceTests(SimpleTestCase):
                 ),
             )
 
-        self.assertEqual(chat.categorizer_agent["request_defaults"]["model"], "categorizer-model")
+        self.assertIsNone(chat.categorizer_agent)
         self.assertEqual(chat.answerer_agent["request_defaults"]["model"], "shared-model")
         self.assertEqual(chat.planner_agent["request_defaults"]["model"], "planner-model")
         self.assertEqual(chat.briefer_agent["request_defaults"]["model"], "briefer-model")
-        self.assertNotIn("temperature", chat.categorizer_agent["request_defaults"])
         self.assertNotIn("temperature", chat.answerer_agent["request_defaults"])
         self.assertNotIn("temperature", chat.planner_agent["request_defaults"])
         self.assertNotIn("temperature", chat.briefer_agent["request_defaults"])
         self.assertNotIn("planner", chat.prompts)
         self.assertEqual(chat.planner_prompt, "Plan writing progression.")
-        self.assertEqual(chat.course_state["overall_progress"], 0)
+        self.assertEqual(
+            serialize_course_state(chat.course_state, expectations=["Write simple sentences.", "Revise sentences for clarity."])["overall_progress"],
+            0,
+        )

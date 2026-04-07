@@ -11,7 +11,7 @@ from django.views.decorators.http import require_GET, require_http_methods, requ
 from ai_chat.models import ChatSession
 
 from .auth import get_user_from_authorization_header
-from .course_state import normalize_course_state, normalize_expectations, require_expectations
+from .course_state import normalize_expectations, require_expectations, serialize_course_state
 from .models import ApiToken, CourseTopic
 from .services import build_chat, create_session, get_session
 
@@ -84,7 +84,7 @@ def _serialize_session(session) -> dict:
     return {
         "session_id": session.pk,
         "course_topic": serialized_topic,
-        "course_state": normalize_course_state(
+        "course_state": serialize_course_state(
             session.course_state,
             expectations=course_topic.expectations if course_topic is not None else None,
         ),
@@ -255,6 +255,9 @@ def chat_view(request):
         {
             "session_id": session_id,
             "response": response,
-            "course_state": chat.course_state,
+            "course_state": serialize_course_state(
+                chat.course_state,
+                expectations=session.course_topic.expectations,
+            ),
         }
     )
