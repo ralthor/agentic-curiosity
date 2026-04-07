@@ -207,9 +207,14 @@ class ChatTests(TestCase):
 
     def test_create_session_initializes_a_context(self):
         session = Chat.create_session(user_id="user-1")
+        context = ChatContext.objects.get(session=session)
 
         self.assertEqual(session.user_id, "user-1")
         self.assertTrue(ChatContext.objects.filter(session=session).exists())
+        self.assertIsNotNone(session.created_at)
+        self.assertIsNotNone(session.updated_at)
+        self.assertIsNotNone(context.created_at)
+        self.assertIsNotNone(context.updated_at)
 
     def test_reply_selects_prompt_persists_turn_and_uses_context(self):
         categorizer = RecordingAgent(model="categorizer", response_text="1", system="Pick a route.")
@@ -226,6 +231,8 @@ class ChatTests(TestCase):
         self.assertEqual(turn.agent_response, "Here is the answer.")
         self.assertEqual(chat.session_id, turn.session_id)
         self.assertEqual(context.session_id, turn.session_id)
+        self.assertIsNotNone(turn.created_at)
+        self.assertIsNotNone(turn.updated_at)
 
         categorizer_payload = categorizer.payloads[-1]
         self.assertEqual(categorizer_payload["messages"][0]["content"], "Pick a route.")

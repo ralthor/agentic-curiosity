@@ -134,6 +134,10 @@
             font-size: 0.92rem;
         }
 
+        .link-chip {
+            text-decoration: none;
+        }
+
         .workspace {
             display: grid;
             grid-template-columns: minmax(300px, 370px) minmax(0, 1fr);
@@ -192,12 +196,14 @@
         }
 
         input,
+        select,
         textarea,
         button {
             font: inherit;
         }
 
         input,
+        select,
         textarea {
             width: 100%;
             padding: 0.85rem 0.95rem;
@@ -209,6 +215,7 @@
         }
 
         input:focus,
+        select:focus,
         textarea:focus {
             outline: none;
             border-color: rgba(214, 90, 49, 0.55);
@@ -264,7 +271,7 @@
 
         .meta-grid {
             display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
             gap: 0.7rem;
         }
 
@@ -451,16 +458,19 @@
 <body>
     <main class="shell">
         <section class="hero">
-            <div class="eyebrow">Elementary Math Console</div>
-            <h1>Talk to the chat API from the Django home page.</h1>
+            <div class="eyebrow">Course Chat Console</div>
+            <h1>Start each chat session with the right stored prompt set.</h1>
             <p class="hero-copy">
-                Log in with Django credentials, capture the API token, create a chat session, and send messages without
-                reloading the page. The UI calls the same JSON endpoints your client code would use.
+                Pick a saved course topic, create a session tied to that topic, and keep the prompt set fixed for the
+                life of the session. Existing sessions can be reopened, but their topic stays locked because the stored
+                chat context depends on it.
             </p>
             <div class="hero-notes">
                 <span class="chip">Prompt router: <strong>teacher</strong> or <strong>judge</strong></span>
+                <span class="chip">Prompt source: <strong>course topic</strong> records</span>
                 <span class="chip">Transport: <strong>fetch</strong> with JSON</span>
-                <span class="chip">State: token and current session saved in this browser</span>
+                <span class="chip">State: token, topic, and current session saved in this browser</span>
+                <a class="chip link-chip" href="{{ course_topics_page_url }}">Open Topic Studio</a>
             </div>
         </section>
 
@@ -511,16 +521,27 @@
                             <div class="meta-label">Current Session</div>
                             <div class="meta-value" id="current-session">none</div>
                         </div>
+                        <div class="meta-card">
+                            <div class="meta-label">Current Topic</div>
+                            <div class="meta-value" id="current-topic">none</div>
+                        </div>
+                    </div>
+                    <div class="field">
+                        <label for="course-topic">Course Topic</label>
+                        <select id="course-topic">
+                            <option value="">Load topics after authentication</option>
+                        </select>
                     </div>
                     <div class="field">
                         <label for="session-id">Session Id</label>
-                        <input id="session-id" type="text" inputmode="numeric" placeholder="Create one or paste an existing session id.">
+                        <input id="session-id" type="text" inputmode="numeric" placeholder="Create a session or load an existing session id.">
                     </div>
                     <div class="button-row">
                         <button class="primary" type="button" id="create-session-button">Create Session</button>
                         <button class="secondary" type="button" id="use-session-button">Use Session Id</button>
+                        <button class="ghost" type="button" id="release-session-button">Leave Current Session</button>
                     </div>
-                    <p class="hint">The page keeps only browser-side transcript state. The backend keeps the real chat context per session.</p>
+                    <p class="hint">Choose a topic before creating a session. When you load an existing session, the stored topic is shown and the selector is locked until you leave that session.</p>
                 </div>
 
                 <div class="section">
@@ -528,6 +549,7 @@
                     <ul class="endpoint-list">
                         <li><code>{{ chat_api_login_url }}</code></li>
                         <li><code>{{ chat_api_token_url }}</code></li>
+                        <li><code>{{ chat_api_course_topics_url }}</code></li>
                         <li><code>{{ chat_api_sessions_url }}</code></li>
                         <li><code>{{ chat_api_chat_url }}</code></li>
                     </ul>
@@ -541,21 +563,21 @@
                 </div>
 
                 <div class="quick-prompts">
-                    <button class="secondary quick-prompt" type="button" data-message="Teach me addition with a simple example.">Teach Addition</button>
-                    <button class="secondary quick-prompt" type="button" data-message="7 + 5 = 13">Judge My Answer</button>
-                    <button class="secondary quick-prompt" type="button" data-message="What is 9 minus 4?">Ask A Question</button>
+                    <button class="secondary quick-prompt" type="button" data-message="Teach me the first important idea in this course topic.">Teach First Idea</button>
+                    <button class="secondary quick-prompt" type="button" data-message="Here is my answer. Can you judge it and explain what I missed?">Judge My Answer</button>
+                    <button class="secondary quick-prompt" type="button" data-message="Give me a short practice question for this course topic.">Give Practice</button>
                 </div>
 
                 <div class="transcript" id="transcript" aria-live="polite">
                     <div class="empty-state" id="empty-state">
-                        Start by logging in or pasting a token, then create a session and send a message.
+                        Start by logging in, loading course topics, and creating a session.
                     </div>
                 </div>
 
                 <form class="composer" id="chat-form">
                     <div class="field">
                         <label for="message">Message</label>
-                        <textarea id="message" placeholder="Ask for a lesson or submit an answer like 8 + 3 = 11."></textarea>
+                        <textarea id="message" placeholder="Ask for instruction, answer a question, or request feedback inside the selected course topic."></textarea>
                     </div>
                     <div class="button-row">
                         <button class="primary" type="submit" id="send-button">Send Message</button>
@@ -571,6 +593,7 @@
         const apiConfig = {
             loginUrl: "{{ chat_api_login_url|escapejs }}",
             tokenUrl: "{{ chat_api_token_url|escapejs }}",
+            courseTopicsUrl: "{{ chat_api_course_topics_url|escapejs }}",
             sessionsUrl: "{{ chat_api_sessions_url|escapejs }}",
             chatUrl: "{{ chat_api_chat_url|escapejs }}"
         };
@@ -578,28 +601,35 @@
         const storageKeys = {
             token: "agentic-curiosity.token",
             sessionId: "agentic-curiosity.sessionId",
-            username: "agentic-curiosity.username"
+            username: "agentic-curiosity.username",
+            topicId: "agentic-curiosity.courseTopicId",
+            topicName: "agentic-curiosity.courseTopicName"
         };
 
         const state = {
             token: localStorage.getItem(storageKeys.token) || "",
             sessionId: localStorage.getItem(storageKeys.sessionId) || "",
-            username: localStorage.getItem(storageKeys.username) || "anonymous"
+            username: localStorage.getItem(storageKeys.username) || "anonymous",
+            topicId: localStorage.getItem(storageKeys.topicId) || "",
+            topicName: localStorage.getItem(storageKeys.topicName) || ""
         };
 
+        const availableTopics = [];
         const authPill = document.getElementById("auth-pill");
         const sessionPill = document.getElementById("session-pill");
         const currentUser = document.getElementById("current-user");
         const currentSession = document.getElementById("current-session");
+        const currentTopic = document.getElementById("current-topic");
         const tokenField = document.getElementById("token");
+        const topicField = document.getElementById("course-topic");
         const sessionField = document.getElementById("session-id");
         const messageField = document.getElementById("message");
         const transcript = document.getElementById("transcript");
-        const emptyState = document.getElementById("empty-state");
         const statusLine = document.getElementById("status-line");
         const sendButton = document.getElementById("send-button");
         const createSessionButton = document.getElementById("create-session-button");
         const useSessionButton = document.getElementById("use-session-button");
+        const releaseSessionButton = document.getElementById("release-session-button");
         const saveTokenButton = document.getElementById("save-token-button");
         const clearStateButton = document.getElementById("clear-state-button");
         const tokenButton = document.getElementById("token-button");
@@ -607,28 +637,82 @@
         const loginForm = document.getElementById("login-form");
         const chatForm = document.getElementById("chat-form");
 
+        function storeValue(key, value) {
+            if (value) {
+                localStorage.setItem(key, value);
+                return;
+            }
+
+            localStorage.removeItem(key);
+        }
+
         function persistState() {
-            localStorage.setItem(storageKeys.token, state.token);
-            localStorage.setItem(storageKeys.sessionId, state.sessionId);
-            localStorage.setItem(storageKeys.username, state.username);
+            storeValue(storageKeys.token, state.token);
+            storeValue(storageKeys.sessionId, state.sessionId);
+            storeValue(storageKeys.username, state.username);
+            storeValue(storageKeys.topicId, state.topicId);
+            storeValue(storageKeys.topicName, state.topicName);
+        }
+
+        function findTopic(topicId) {
+            return availableTopics.find((topic) => String(topic.id) === String(topicId)) || null;
+        }
+
+        function renderCourseTopics() {
+            topicField.innerHTML = "";
+
+            const placeholder = document.createElement("option");
+            placeholder.value = "";
+            placeholder.textContent = state.token
+                ? (availableTopics.length ? "Select a course topic" : "No topics available yet")
+                : "Load topics after authentication";
+            topicField.appendChild(placeholder);
+
+            availableTopics.forEach((topic) => {
+                const option = document.createElement("option");
+                option.value = String(topic.id);
+                option.textContent = topic.name;
+                topicField.appendChild(option);
+            });
+
+            if (state.topicId && !findTopic(state.topicId)) {
+                const lockedOption = document.createElement("option");
+                lockedOption.value = state.topicId;
+                lockedOption.textContent = state.topicName || `Topic ${state.topicId}`;
+                topicField.appendChild(lockedOption);
+            }
+
+            topicField.value = state.topicId || "";
         }
 
         function syncUi() {
+            const topicLocked = Boolean(state.sessionId);
+
             tokenField.value = state.token;
             sessionField.value = state.sessionId;
+            topicField.value = state.topicId || "";
             currentUser.textContent = state.username || "anonymous";
             currentSession.textContent = state.sessionId || "none";
+            currentTopic.textContent = state.topicName || "none";
 
             authPill.textContent = state.token ? "Token Ready" : "Token Missing";
             authPill.classList.toggle("ready", Boolean(state.token));
 
-            sessionPill.textContent = state.sessionId ? "Session Active" : "No Session";
-            sessionPill.classList.toggle("ready", Boolean(state.sessionId));
+            if (state.sessionId) {
+                sessionPill.textContent = "Session Active";
+            } else if (state.topicId) {
+                sessionPill.textContent = "Topic Selected";
+            } else {
+                sessionPill.textContent = "No Session";
+            }
+            sessionPill.classList.toggle("ready", Boolean(state.sessionId || state.topicId));
 
-            sendButton.disabled = !state.token;
-            createSessionButton.disabled = !state.token;
+            topicField.disabled = !state.token || topicLocked || availableTopics.length === 0;
+            sendButton.disabled = !state.token || (!state.sessionId && !state.topicId);
+            createSessionButton.disabled = !state.token || !state.topicId;
             useSessionButton.disabled = !state.token;
-            newThreadButton.disabled = !state.token;
+            releaseSessionButton.disabled = !state.sessionId;
+            newThreadButton.disabled = !state.token || !state.topicId;
         }
 
         function setStatus(message, type = "info") {
@@ -647,7 +731,17 @@
             return result;
         }
 
+        function resetTranscript(message) {
+            transcript.innerHTML = "";
+            const panel = document.createElement("div");
+            panel.className = "empty-state";
+            panel.id = "empty-state";
+            panel.textContent = message;
+            transcript.appendChild(panel);
+        }
+
         function removeEmptyState() {
+            const emptyState = document.getElementById("empty-state");
             if (emptyState && emptyState.parentNode) {
                 emptyState.parentNode.removeChild(emptyState);
             }
@@ -692,27 +786,95 @@
             return payload;
         }
 
+        async function loadCourseTopics() {
+            if (!state.token) {
+                availableTopics.splice(0, availableTopics.length);
+                renderCourseTopics();
+                syncUi();
+                return;
+            }
+
+            const payload = await requestJson(apiConfig.courseTopicsUrl, {
+                method: "GET",
+                headers: headers({ json: false })
+            });
+
+            availableTopics.splice(0, availableTopics.length, ...payload.topics);
+
+            if (!state.topicId && availableTopics.length === 1) {
+                state.topicId = String(availableTopics[0].id);
+                state.topicName = availableTopics[0].name;
+            }
+
+            const matchedTopic = findTopic(state.topicId);
+            if (matchedTopic) {
+                state.topicName = matchedTopic.name;
+            }
+
+            persistState();
+            renderCourseTopics();
+            syncUi();
+        }
+
+        function leaveCurrentSession({ preserveTopic = true, message = "Left the current session." } = {}) {
+            state.sessionId = "";
+            if (!preserveTopic) {
+                state.topicId = "";
+                state.topicName = "";
+            }
+
+            persistState();
+            renderCourseTopics();
+            syncUi();
+            resetTranscript("Start by creating a session for the selected course topic.");
+            setStatus(message);
+        }
+
         async function createSession() {
+            if (!state.topicId) {
+                throw new Error("Choose a course topic before creating a session.");
+            }
+
             const payload = await requestJson(apiConfig.sessionsUrl, {
                 method: "POST",
-                headers: headers()
+                headers: headers(),
+                body: JSON.stringify({
+                    course_topic_id: Number(state.topicId)
+                })
             });
 
             state.sessionId = String(payload.session_id);
+            state.topicId = payload.course_topic ? String(payload.course_topic.id) : "";
+            state.topicName = payload.course_topic ? payload.course_topic.name : "";
             persistState();
+            renderCourseTopics();
             syncUi();
-            appendMessage("system", "Session", `Created session ${state.sessionId}.`);
+            resetTranscript(`Session ${state.sessionId} is ready. The server will keep using the ${state.topicName} prompt set for this session.`);
+            appendMessage("system", "Session", `Created session ${state.sessionId} using ${state.topicName}.`);
             return state.sessionId;
         }
 
-        async function ensureSession() {
-            const explicitSession = sessionField.value.trim();
-            if (explicitSession) {
-                state.sessionId = explicitSession;
-                persistState();
-                syncUi();
+        async function loadSession(sessionId) {
+            const payload = await requestJson(`${apiConfig.sessionsUrl}${sessionId}/`, {
+                method: "GET",
+                headers: headers({ json: false })
+            });
+
+            if (!payload.course_topic) {
+                throw new Error("Session does not have a stored course topic.");
             }
 
+            state.sessionId = String(payload.session_id);
+            state.topicId = String(payload.course_topic.id);
+            state.topicName = payload.course_topic.name;
+            persistState();
+            renderCourseTopics();
+            syncUi();
+            resetTranscript(`Loaded session ${state.sessionId}. The topic is locked to ${state.topicName}. Browser transcript starts fresh here; server-side context is preserved.`);
+            appendMessage("system", "Session", `Loaded existing session ${state.sessionId} for ${state.topicName}.`);
+        }
+
+        async function ensureSession() {
             if (state.sessionId) {
                 return state.sessionId;
             }
@@ -733,11 +895,17 @@
                 return;
             }
 
+            if (!state.topicId) {
+                setStatus("Choose a course topic first.", "error");
+                return;
+            }
+
             try {
                 if (forceNewSession) {
-                    state.sessionId = "";
-                    persistState();
-                    syncUi();
+                    leaveCurrentSession({
+                        preserveTopic: true,
+                        message: "Preparing a fresh session with the selected topic..."
+                    });
                 }
 
                 const sessionId = await ensureSession();
@@ -783,7 +951,9 @@
                 state.token = payload.token;
                 state.username = payload.username;
                 persistState();
+                renderCourseTopics();
                 syncUi();
+                await loadCourseTopics();
                 document.getElementById("password").value = "";
                 setStatus(`Logged in as ${payload.username}.`);
                 appendMessage("system", "Auth", `Authenticated as ${payload.username}.`);
@@ -803,7 +973,9 @@
                 state.token = payload.token;
                 state.username = payload.username;
                 persistState();
+                renderCourseTopics();
                 syncUi();
+                await loadCourseTopics();
                 setStatus(`Token loaded for ${payload.username}.`);
                 appendMessage("system", "Auth", `Loaded token for ${payload.username}.`);
             } catch (error) {
@@ -811,21 +983,41 @@
             }
         });
 
-        saveTokenButton.addEventListener("click", () => {
+        saveTokenButton.addEventListener("click", async () => {
             state.token = tokenField.value.trim();
             persistState();
+            renderCourseTopics();
             syncUi();
-            setStatus(state.token ? "Token saved in this browser." : "Token cleared from this browser.");
+
+            if (!state.token) {
+                availableTopics.splice(0, availableTopics.length);
+                renderCourseTopics();
+                syncUi();
+                setStatus("Token cleared from this browser.");
+                return;
+            }
+
+            try {
+                await loadCourseTopics();
+                setStatus("Token saved in this browser.");
+            } catch (error) {
+                setStatus(error.message, "error");
+            }
         });
 
         clearStateButton.addEventListener("click", () => {
             state.token = "";
             state.sessionId = "";
             state.username = "anonymous";
+            state.topicId = "";
+            state.topicName = "";
+            availableTopics.splice(0, availableTopics.length);
             persistState();
+            renderCourseTopics();
             syncUi();
-            setStatus("Local token and session state cleared.");
-            appendMessage("system", "State", "Cleared token and session from local browser storage.");
+            resetTranscript("Start by logging in, loading course topics, and creating a session.");
+            setStatus("Local token, topic, and session state cleared.");
+            appendMessage("system", "State", "Cleared token, topic, and session from local browser storage.");
         });
 
         createSessionButton.addEventListener("click", async () => {
@@ -834,7 +1026,19 @@
                 return;
             }
 
+            if (!state.topicId) {
+                setStatus("Choose a course topic first.", "error");
+                return;
+            }
+
             try {
+                if (state.sessionId) {
+                    leaveCurrentSession({
+                        preserveTopic: true,
+                        message: "Preparing a fresh session with the selected topic..."
+                    });
+                }
+
                 setStatus("Creating a fresh session...");
                 await createSession();
                 setStatus(`Session ${state.sessionId} is ready.`);
@@ -843,18 +1047,49 @@
             }
         });
 
-        useSessionButton.addEventListener("click", () => {
+        useSessionButton.addEventListener("click", async () => {
             const chosen = sessionField.value.trim();
             if (!chosen) {
                 setStatus("Enter a session id first.", "error");
                 return;
             }
 
-            state.sessionId = chosen;
+            try {
+                setStatus("Loading stored session details...");
+                await loadCourseTopics();
+                await loadSession(chosen);
+                setStatus(`Using session ${chosen} with topic ${state.topicName}.`);
+            } catch (error) {
+                setStatus(error.message, "error");
+                appendMessage("system", "Error", error.message);
+            }
+        });
+
+        releaseSessionButton.addEventListener("click", () => {
+            if (!state.sessionId) {
+                setStatus("No active session to leave.", "error");
+                return;
+            }
+
+            leaveCurrentSession({
+                preserveTopic: true,
+                message: "Current session released. You can keep this topic or choose a different one."
+            });
+            appendMessage("system", "Session", "Released the current session. Select a topic and create a new one when ready.");
+        });
+
+        topicField.addEventListener("change", () => {
+            if (state.sessionId) {
+                topicField.value = state.topicId || "";
+                return;
+            }
+
+            const topic = findTopic(topicField.value);
+            state.topicId = topic ? String(topic.id) : "";
+            state.topicName = topic ? topic.name : "";
             persistState();
             syncUi();
-            setStatus(`Using session ${chosen}.`);
-            appendMessage("system", "Session", `Using existing session ${chosen}.`);
+            setStatus(state.topicName ? `Selected topic ${state.topicName}.` : "Choose a course topic to begin.");
         });
 
         chatForm.addEventListener("submit", async (event) => {
@@ -873,8 +1108,26 @@
             });
         });
 
+        renderCourseTopics();
         syncUi();
-        setStatus(state.token ? "Ready. Create a session or send a message." : "Waiting for input.");
+
+        if (state.token) {
+            loadCourseTopics()
+                .then(() => {
+                    if (state.sessionId) {
+                        setStatus(`Ready. Session ${state.sessionId} is selected.`);
+                    } else if (state.topicId) {
+                        setStatus(`Ready. Topic ${state.topicName} is selected.`);
+                    } else {
+                        setStatus("Ready. Choose a course topic and start a session.");
+                    }
+                })
+                .catch((error) => {
+                    setStatus(error.message, "error");
+                });
+        } else {
+            setStatus("Waiting for input.");
+        }
     </script>
 </body>
 </html>

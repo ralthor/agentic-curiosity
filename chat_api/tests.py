@@ -8,8 +8,8 @@ from django.test import SimpleTestCase, TestCase, override_settings
 from ai_chat import Agent, Chat, ChatPrompt
 from ai_chat.models import ChatContext, ChatSession, ChatTurn
 
-from .models import ApiToken
-from .services import build_chat
+from .models import ApiToken, CourseTopic
+from .services import build_chat, create_session as create_topic_session
 
 
 class RecordingAgent(Agent):
@@ -25,6 +25,14 @@ class ChatApiTests(TestCase):
     def setUp(self):
         self.user = get_user_model().objects.create_user(username="alice", password="wonderland")
         self.other_user = get_user_model().objects.create_user(username="bob", password="builder")
+        self.course_topic = CourseTopic.objects.create(
+            name="Test Topic",
+            teacher_prompt="Teach one arithmetic idea at a time.",
+            judge_prompt="Judge a student's arithmetic answer.",
+            categorizer_prompt="Pick the best prompt number and return only the number.",
+            answerer_prompt="Answer clearly for the selected arithmetic prompt.",
+            briefer_prompt="Condense the arithmetic tutoring session.",
+        )
 
     def _post_json(self, path, payload, **extra):
         return self.client.post(
@@ -71,7 +79,7 @@ class ChatApiTests(TestCase):
             "Authentication credentials were not provided or are invalid.",
         )
 
-    def test_create_session_returns_a_session_id_for_the_authenticated_user(self):
+    def test_create_session_requires_a_course_topic_id(self):
         token = ApiToken.issue_for_user(self.user)
 
         response = self._post_json(
@@ -80,10 +88,74 @@ class ChatApiTests(TestCase):
             **self._authorization_header(token),
         )
 
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "course_topic_id must be a positive integer.")
+
+    def test_create_session_returns_a_session_id_and_course_topic_for_the_authenticated_user(self):
+        token = ApiToken.issue_for_user(self.user)
+
+        response = self._post_json(
+            "/api/chat/sessions/",
+            {"course_topic_id": self.course_topic.pk},
+            **self._authorization_header(token),
+        )
+
         self.assertEqual(response.status_code, 201)
         session = ChatSession.objects.get(pk=response.json()["session_id"])
         self.assertEqual(session.user_id, str(self.user.pk))
+        self.assertEqual(session.course_topic, self.course_topic)
         self.assertTrue(ChatContext.objects.filter(session=session).exists())
+        self.assertEqual(
+            response.json()["course_topic"],
+            {"id": self.course_topic.pk, "name": self.course_topic.name},
+        )
+
+    def test_course_topics_endpoint_lists_existing_topics(self):
+        token = ApiToken.issue_for_user(self.user)
+
+        response = self.client.get(
+            "/api/chat/course-topics/",
+            **self._authorization_header(token),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        topic_names = {topic["name"] for topic in response.json()["topics"]}
+        self.assertIn(self.course_topic.name, topic_names)
+
+    def test_course_topics_endpoint_creates_a_topic(self):
+        token = ApiToken.issue_for_user(self.user)
+
+        response = self._post_json(
+            "/api/chat/course-topics/",
+            {
+                "name": "Physics Intro",
+                "teacher_prompt": "Teach one physics idea at a time.",
+                "judge_prompt": "Judge a physics answer.",
+                "categorizer_prompt": "Return the best prompt number.",
+                "answerer_prompt": "Answer as a physics tutor.",
+                "briefer_prompt": "Condense the physics session.",
+            },
+            **self._authorization_header(token),
+        )
+
+        self.assertEqual(response.status_code, 201)
+        topic = CourseTopic.objects.get(name="Physics Intro")
+        self.assertEqual(response.json()["topic"]["id"], topic.pk)
+
+    def test_session_detail_returns_the_stored_course_topic(self):
+        token = ApiToken.issue_for_user(self.user)
+        session = create_topic_session(user=self.user, course_topic=self.course_topic)
+
+        response = self.client.get(
+            f"/api/chat/sessions/{session.pk}/",
+            **self._authorization_header(token),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json()["course_topic"],
+            {"id": self.course_topic.pk, "name": self.course_topic.name},
+        )
 
     def test_chat_rejects_sessions_owned_by_another_user(self):
         token = ApiToken.issue_for_user(self.user)
@@ -100,11 +172,12 @@ class ChatApiTests(TestCase):
 
     def test_chat_returns_a_response_and_persists_the_turn(self):
         token = ApiToken.issue_for_user(self.user)
-        session = Chat.create_session(user_id=self.user.pk)
+        session = create_topic_session(user=self.user, course_topic=self.course_topic)
 
-        def build_test_chat(*, user, session_id=None):
+        def build_test_chat(*, user, session_id=None, course_topic=None):
             self.assertEqual(user.pk, self.user.pk)
             self.assertEqual(session_id, session.pk)
+            self.assertEqual(course_topic, self.course_topic)
             return Chat(
                 user_id=user.pk,
                 session_id=session_id,
@@ -151,7 +224,17 @@ class ChatApiServiceTests(SimpleTestCase):
         with patch("chat_api.services.OpenAIAgent") as openai_agent_class:
             openai_agent_class.side_effect = lambda **kwargs: kwargs
 
-            chat = build_chat(user=SimpleNamespace(pk=7), session_id=12)
+            chat = build_chat(
+                user=SimpleNamespace(pk=7),
+                session_id=12,
+                course_topic=SimpleNamespace(
+                    teacher_prompt="Teach arithmetic.",
+                    judge_prompt="Judge arithmetic answers.",
+                    categorizer_prompt="Pick a prompt number.",
+                    answerer_prompt="Answer arithmetic questions clearly.",
+                    briefer_prompt="Condense arithmetic sessions.",
+                ),
+            )
 
         self.assertEqual(chat.categorizer_agent["request_defaults"]["model"], "gpt-5-mini")
         self.assertEqual(chat.answerer_agent["request_defaults"]["model"], "gpt-5.4-mini")
@@ -159,6 +242,8 @@ class ChatApiServiceTests(SimpleTestCase):
         self.assertNotIn("temperature", chat.categorizer_agent["request_defaults"])
         self.assertNotIn("temperature", chat.answerer_agent["request_defaults"])
         self.assertNotIn("temperature", chat.briefer_agent["request_defaults"])
+        self.assertEqual(chat.prompts["teacher"], "Teach arithmetic.")
+        self.assertEqual(chat.prompts["judge"], "Judge arithmetic answers.")
 
     @override_settings(
         AI_CHAT_MODEL="shared-model",
@@ -170,7 +255,17 @@ class ChatApiServiceTests(SimpleTestCase):
         with patch("chat_api.services.OpenAIAgent") as openai_agent_class:
             openai_agent_class.side_effect = lambda **kwargs: kwargs
 
-            chat = build_chat(user=SimpleNamespace(pk=7), session_id=12)
+            chat = build_chat(
+                user=SimpleNamespace(pk=7),
+                session_id=12,
+                course_topic=SimpleNamespace(
+                    teacher_prompt="Teach writing.",
+                    judge_prompt="Judge writing answers.",
+                    categorizer_prompt="Pick a writing prompt number.",
+                    answerer_prompt="Answer writing questions clearly.",
+                    briefer_prompt="Condense writing sessions.",
+                ),
+            )
 
         self.assertEqual(chat.categorizer_agent["request_defaults"]["model"], "categorizer-model")
         self.assertEqual(chat.answerer_agent["request_defaults"]["model"], "shared-model")

@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Course Topics</title>
+    <style>
+        :root {
+            --paper: #f7f1e3;
+            --ink: #20303a;
+            --muted: #64717a;
+            --line: rgba(32, 48, 58, 0.12);
+            --accent: #d65a31;
+            --accent-soft: #ffe1d3;
+            --teal-soft: #dff2f0;
+            --shadow: 0 18px 50px rgba(63, 45, 33, 0.12);
+            --radius-lg: 28px;
+            --radius-md: 18px;
+            --radius-sm: 12px;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            color: var(--ink);
+            background:
+                radial-gradient(circle at top left, rgba(214, 90, 49, 0.18), transparent 30%),
+                radial-gradient(circle at right 20%, rgba(47, 124, 130, 0.14), transparent 28%),
+                linear-gradient(180deg, #fff7ef 0%, #f7f1e3 52%, #efe5d6 100%);
+            font-family: "Trebuchet MS", "Gill Sans", sans-serif;
+        }
+
+        .shell {
+            width: min(1180px, calc(100% - 2rem));
+            margin: 0 auto;
+            padding: 2rem 0 3rem;
+        }
+
+        .hero,
+        .panel {
+            padding: 1.4rem;
+            border: 1px solid rgba(255, 255, 255, 0.65);
+            border-radius: var(--radius-lg);
+            background: rgba(255, 250, 240, 0.88);
+            box-shadow: var(--shadow);
+        }
+
+        .hero {
+            margin-bottom: 1rem;
+            background: linear-gradient(135deg, rgba(255, 250, 240, 0.95), rgba(255, 240, 228, 0.84));
+        }
+
+        .eyebrow,
+        .status-pill {
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            font-size: 0.74rem;
+            font-weight: 700;
+        }
+
+        .eyebrow {
+            color: var(--accent);
+        }
+
+        h1,
+        h2,
+        h3 {
+            margin: 0;
+            font-family: Georgia, "Palatino Linotype", serif;
+        }
+
+        h1 {
+            margin-top: 0.4rem;
+            font-size: clamp(2.1rem, 4vw, 3.6rem);
+            max-width: 12ch;
+            line-height: 1.06;
+        }
+
+        p {
+            color: var(--muted);
+            line-height: 1.6;
+        }
+
+        .top-links,
+        .button-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.7rem;
+        }
+
+        .top-links a,
+        button {
+            border: 0;
+            border-radius: 999px;
+            padding: 0.8rem 1.15rem;
+            font: inherit;
+            text-decoration: none;
+            cursor: pointer;
+        }
+
+        .top-links a,
+        .secondary {
+            background: rgba(255, 255, 255, 0.92);
+            color: var(--ink);
+            border: 1px solid var(--line);
+        }
+
+        .primary {
+            background: linear-gradient(135deg, var(--accent), #e07b39);
+            color: #fff7f2;
+        }
+
+        .ghost {
+            background: transparent;
+            color: var(--muted);
+            border: 1px dashed rgba(32, 48, 58, 0.22);
+        }
+
+        .workspace {
+            display: grid;
+            grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
+            gap: 1rem;
+        }
+
+        .panel-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        .status-pill {
+            padding: 0.42rem 0.7rem;
+            border-radius: 999px;
+            background: var(--accent-soft);
+            color: #af3e1e;
+        }
+
+        .status-pill.ready {
+            background: var(--teal-soft);
+            color: #18535a;
+        }
+
+        .section,
+        .field,
+        .topic-list {
+            display: grid;
+            gap: 0.85rem;
+        }
+
+        label {
+            font-size: 0.92rem;
+            font-weight: 700;
+        }
+
+        input,
+        textarea {
+            width: 100%;
+            padding: 0.85rem 0.95rem;
+            border: 1px solid var(--line);
+            border-radius: var(--radius-sm);
+            background: rgba(255, 255, 255, 0.9);
+            color: var(--ink);
+            font: inherit;
+        }
+
+        textarea {
+            min-height: 120px;
+            resize: vertical;
+        }
+
+        .status-line {
+            min-height: 1.5rem;
+            color: var(--muted);
+            font-size: 0.94rem;
+        }
+
+        .status-line.error {
+            color: #9b2c17;
+        }
+
+        .meta {
+            padding: 0.9rem 1rem;
+            border-radius: var(--radius-md);
+            background: rgba(255, 255, 255, 0.78);
+            border: 1px solid rgba(32, 48, 58, 0.08);
+        }
+
+        .topic-card {
+            padding: 1rem;
+            border-radius: var(--radius-md);
+            background: rgba(255, 255, 255, 0.82);
+            border: 1px solid rgba(32, 48, 58, 0.08);
+        }
+
+        .topic-card p {
+            margin: 0.45rem 0 0;
+        }
+
+        details {
+            margin-top: 0.7rem;
+        }
+
+        summary {
+            cursor: pointer;
+            font-weight: 700;
+        }
+
+        pre {
+            margin: 0.6rem 0 0;
+            padding: 0.8rem;
+            border-radius: var(--radius-sm);
+            background: rgba(32, 48, 58, 0.06);
+            white-space: pre-wrap;
+            word-break: break-word;
+            font: 0.9rem/1.45 Consolas, "Courier New", monospace;
+        }
+
+        .empty {
+            padding: 1.2rem;
+            border: 1px dashed rgba(32, 48, 58, 0.18);
+            border-radius: var(--radius-md);
+            color: var(--muted);
+            background: rgba(255, 255, 255, 0.55);
+        }
+
+        @media (max-width: 960px) {
+            .workspace {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media (max-width: 640px) {
+            .shell {
+                width: min(100% - 1rem, 1180px);
+                padding-top: 0.75rem;
+            }
+
+            .hero,
+            .panel {
+                padding: 1.05rem;
+                border-radius: 22px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <main class="shell">
+        <section class="hero">
+            <div class="eyebrow">Topic Studio</div>
+            <h1>Store reusable prompt sets as course topics.</h1>
+            <p>
+                Each topic defines the five prompts used by the chat session flow: teacher, judge, categorizer,
+                answerer, and briefer. Topics created here become selectable on the chat page for new sessions.
+            </p>
+            <div class="top-links">
+                <a href="{{ home_url }}">Open Chat Console</a>
+            </div>
+        </section>
+
+        <section class="workspace">
+            <aside class="panel">
+                <div class="panel-header">
+                    <h2>Access</h2>
+                    <span class="status-pill" id="auth-pill">Token Missing</span>
+                </div>
+
+                <div class="section">
+                    <div class="meta" id="user-meta">Current user: anonymous</div>
+                    <div class="field">
+                        <label for="token">API Token</label>
+                        <textarea id="token" spellcheck="false" placeholder="Paste a token here or load one from the current Django session."></textarea>
+                    </div>
+                    <div class="button-row">
+                        <button class="secondary" type="button" id="token-button">Use Django Session</button>
+                        <button class="secondary" type="button" id="save-token-button">Save Token</button>
+                        <button class="ghost" type="button" id="clear-token-button">Clear Token</button>
+                    </div>
+                </div>
+
+                <form class="section" id="topic-form">
+                    <div class="field">
+                        <label for="name">Name</label>
+                        <input id="name" name="name" type="text" placeholder="Algebra Basics">
+                    </div>
+                    <div class="field">
+                        <label for="teacher_prompt">Teacher Prompt</label>
+                        <textarea id="teacher_prompt" name="teacher_prompt" placeholder="Describe how the teaching agent should instruct."></textarea>
+                    </div>
+                    <div class="field">
+                        <label for="judge_prompt">Judge Prompt</label>
+                        <textarea id="judge_prompt" name="judge_prompt" placeholder="Describe how the judging agent should evaluate answers."></textarea>
+                    </div>
+                    <div class="field">
+                        <label for="categorizer_prompt">Categorizer Prompt</label>
+                        <textarea id="categorizer_prompt" name="categorizer_prompt" placeholder="Describe how to choose between prompts."></textarea>
+                    </div>
+                    <div class="field">
+                        <label for="answerer_prompt">Answerer Prompt</label>
+                        <textarea id="answerer_prompt" name="answerer_prompt" placeholder="Describe the main answer generation behavior."></textarea>
+                    </div>
+                    <div class="field">
+                        <label for="briefer_prompt">Briefer Prompt</label>
+                        <textarea id="briefer_prompt" name="briefer_prompt" placeholder="Describe how the session should be condensed."></textarea>
+                    </div>
+                    <div class="button-row">
+                        <button class="primary" type="submit" id="create-topic-button">Create Course Topic</button>
+                    </div>
+                    <div class="status-line" id="status-line">Waiting for input.</div>
+                </form>
+            </aside>
+
+            <section class="panel">
+                <div class="panel-header">
+                    <h2>Stored Topics</h2>
+                    <span class="status-pill ready" id="library-pill">Library</span>
+                </div>
+                <div class="topic-list" id="topic-list">
+                    <div class="empty">Save a token to load course topics.</div>
+                </div>
+            </section>
+        </section>
+    </main>
+
+    <script>
+        const apiConfig = {
+            tokenUrl: "{{ chat_api_token_url|escapejs }}",
+            courseTopicsUrl: "{{ chat_api_course_topics_url|escapejs }}"
+        };
+
+        const storageKeys = {
+            token: "agentic-curiosity.token",
+            username: "agentic-curiosity.username"
+        };
+
+        const state = {
+            token: localStorage.getItem(storageKeys.token) || "",
+            username: localStorage.getItem(storageKeys.username) || "anonymous"
+        };
+
+        const authPill = document.getElementById("auth-pill");
+        const userMeta = document.getElementById("user-meta");
+        const tokenField = document.getElementById("token");
+        const tokenButton = document.getElementById("token-button");
+        const saveTokenButton = document.getElementById("save-token-button");
+        const clearTokenButton = document.getElementById("clear-token-button");
+        const topicForm = document.getElementById("topic-form");
+        const statusLine = document.getElementById("status-line");
+        const topicList = document.getElementById("topic-list");
+        const createTopicButton = document.getElementById("create-topic-button");
+
+        function persistState() {
+            if (state.token) {
+                localStorage.setItem(storageKeys.token, state.token);
+            } else {
+                localStorage.removeItem(storageKeys.token);
+            }
+
+            if (state.username) {
+                localStorage.setItem(storageKeys.username, state.username);
+            } else {
+                localStorage.removeItem(storageKeys.username);
+            }
+        }
+
+        function syncUi() {
+            tokenField.value = state.token;
+            userMeta.textContent = `Current user: ${state.username || "anonymous"}`;
+            authPill.textContent = state.token ? "Token Ready" : "Token Missing";
+            authPill.classList.toggle("ready", Boolean(state.token));
+            createTopicButton.disabled = !state.token;
+        }
+
+        function setStatus(message, type = "info") {
+            statusLine.textContent = message;
+            statusLine.classList.toggle("error", type === "error");
+        }
+
+        function headers({ json = true, token = true } = {}) {
+            const result = {};
+            if (json) {
+                result["Content-Type"] = "application/json";
+            }
+            if (token && state.token) {
+                result["Authorization"] = `Token ${state.token}`;
+            }
+            return result;
+        }
+
+        async function requestJson(url, options = {}) {
+            const response = await fetch(url, {
+                credentials: "same-origin",
+                ...options
+            });
+
+            let payload = {};
+            try {
+                payload = await response.json();
+            } catch (_error) {
+                payload = {};
+            }
+
+            if (!response.ok) {
+                throw new Error(payload.error || `Request failed with status ${response.status}.`);
+            }
+
+            return payload;
+        }
+
+        function renderTopics(topics) {
+            topicList.innerHTML = "";
+
+            if (!topics.length) {
+                const empty = document.createElement("div");
+                empty.className = "empty";
+                empty.textContent = state.token
+                    ? "No topics saved yet. Create one from the form."
+                    : "Save a token to load course topics.";
+                topicList.appendChild(empty);
+                return;
+            }
+
+            topics.forEach((topic) => {
+                const card = document.createElement("article");
+                card.className = "topic-card";
+
+                const title = document.createElement("h3");
+                title.textContent = topic.name;
+                card.appendChild(title);
+
+                const summary = document.createElement("p");
+                summary.textContent = `Created ${new Date(topic.created_at).toLocaleString()}`;
+                card.appendChild(summary);
+
+                [
+                    ["Teacher Prompt", topic.teacher_prompt],
+                    ["Judge Prompt", topic.judge_prompt],
+                    ["Categorizer Prompt", topic.categorizer_prompt],
+                    ["Answerer Prompt", topic.answerer_prompt],
+                    ["Briefer Prompt", topic.briefer_prompt]
+                ].forEach(([label, value]) => {
+                    const details = document.createElement("details");
+                    const detailSummary = document.createElement("summary");
+                    detailSummary.textContent = label;
+                    details.appendChild(detailSummary);
+
+                    const pre = document.createElement("pre");
+                    pre.textContent = value;
+                    details.appendChild(pre);
+                    card.appendChild(details);
+                });
+
+                topicList.appendChild(card);
+            });
+        }
+
+        async function loadTopics() {
+            if (!state.token) {
+                renderTopics([]);
+                syncUi();
+                return;
+            }
+
+            const payload = await requestJson(apiConfig.courseTopicsUrl, {
+                method: "GET",
+                headers: headers({ json: false })
+            });
+            renderTopics(payload.topics);
+        }
+
+        tokenButton.addEventListener("click", async () => {
+            try {
+                setStatus("Requesting a token from the current Django session...");
+                const payload = await requestJson(apiConfig.tokenUrl, {
+                    method: "POST",
+                    headers: headers({ token: false })
+                });
+                state.token = payload.token;
+                state.username = payload.username;
+                persistState();
+                syncUi();
+                await loadTopics();
+                setStatus(`Token loaded for ${payload.username}.`);
+            } catch (error) {
+                setStatus(error.message, "error");
+            }
+        });
+
+        saveTokenButton.addEventListener("click", async () => {
+            state.token = tokenField.value.trim();
+            persistState();
+            syncUi();
+
+            try {
+                await loadTopics();
+                setStatus(state.token ? "Token saved in this browser." : "Token cleared from this browser.");
+            } catch (error) {
+                setStatus(error.message, "error");
+            }
+        });
+
+        clearTokenButton.addEventListener("click", () => {
+            state.token = "";
+            state.username = "anonymous";
+            persistState();
+            syncUi();
+            renderTopics([]);
+            setStatus("Saved token cleared.");
+        });
+
+        topicForm.addEventListener("submit", async (event) => {
+            event.preventDefault();
+
+            if (!state.token) {
+                setStatus("Load or save a token before creating a topic.", "error");
+                return;
+            }
+
+            const formData = new FormData(topicForm);
+            const payload = Object.fromEntries(formData.entries());
+
+            try {
+                setStatus("Creating course topic...");
+                await requestJson(apiConfig.courseTopicsUrl, {
+                    method: "POST",
+                    headers: headers(),
+                    body: JSON.stringify(payload)
+                });
+                topicForm.reset();
+                await loadTopics();
+                setStatus(`Created course topic ${payload.name}.`);
+            } catch (error) {
+                setStatus(error.message, "error");
+            }
+        });
+
+        syncUi();
+        loadTopics()
+            .then(() => {
+                if (!state.token) {
+                    setStatus("Waiting for input.");
+                } else {
+                    setStatus("Ready to create or review course topics.");
+                }
+            })
+            .catch((error) => {
+                setStatus(error.message, "error");
+            });
+    </script>
+</body>
+</html>

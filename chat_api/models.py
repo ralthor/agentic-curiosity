@@ -10,6 +10,23 @@ def generate_api_token_key() -> str:
     return secrets.token_hex(32)
 
 
+class CourseTopic(models.Model):
+    name = models.CharField(max_length=255, unique=True)
+    teacher_prompt = models.TextField()
+    judge_prompt = models.TextField()
+    categorizer_prompt = models.TextField()
+    answerer_prompt = models.TextField()
+    briefer_prompt = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("name", "id")
+
+    def __str__(self) -> str:
+        return self.name
+
+
 class ApiToken(models.Model):
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,

@@ -5,8 +5,9 @@ from .models import ChatContext, ChatSession, ChatTurn
 
 @admin.register(ChatSession)
 class ChatSessionAdmin(admin.ModelAdmin):
-    list_display = ("id", "user_id", "created_at", "updated_at")
-    search_fields = ("user_id",)
+    list_display = ("id", "user_id", "course_topic", "created_at", "updated_at")
+    list_select_related = ("course_topic",)
+    search_fields = ("user_id", "course_topic__name")
     ordering = ("-created_at", "-id")
 
 

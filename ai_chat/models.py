@@ -5,6 +5,13 @@ from django.db import models
 
 class ChatSession(models.Model):
     user_id = models.CharField(max_length=255, db_index=True)
+    course_topic = models.ForeignKey(
+        "chat_api.CourseTopic",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="sessions",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -12,7 +19,7 @@ class ChatSession(models.Model):
         ordering = ("created_at", "id")
 
     def __str__(self) -> str:
-        return f"ChatSession(user_id={self.user_id!r}, id={self.pk})"
+        return f"ChatSession(user_id={self.user_id!r}, course_topic_id={self.course_topic_id!r}, id={self.pk})"
 
 
 class ChatTurn(models.Model):
@@ -21,6 +28,7 @@ class ChatTurn(models.Model):
     user_text = models.TextField()
     agent_response = models.TextField()
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ("created_at", "id")
@@ -43,6 +51,7 @@ class ChatContext(models.Model):
         related_name="+",
     )
     summary = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
     last_compacted_at = models.DateTimeField(null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
 

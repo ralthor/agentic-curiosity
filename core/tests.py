@@ -7,8 +7,18 @@ class HomePageTests(SimpleTestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertTemplateUsed(response, "core/home.html")
-        self.assertContains(response, "Talk to the chat API from the Django home page.")
+        self.assertContains(response, "Start each chat session with the right stored prompt set.")
         self.assertContains(response, "/api/chat/login/")
         self.assertContains(response, "/api/chat/token/")
+        self.assertContains(response, "/api/chat/course-topics/")
         self.assertContains(response, "/api/chat/sessions/")
         self.assertContains(response, "/api/chat/chat/")
+
+    def test_course_topics_page_renders(self):
+        response = self.client.get("/course-topics/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "core/course_topics.html")
+        self.assertContains(response, "Store reusable prompt sets as course topics.")
+        self.assertContains(response, "Create Course Topic")
+        self.assertContains(response, "Use Django Session")
