@@ -40,6 +40,7 @@ class Chat:
         context_threshold_bytes: int = 5_120,
         recent_turns_to_keep: int = 10,
         topic_name: str | None = None,
+        planner_prompt: str | None = None,
     ) -> None:
         if context_threshold_bytes <= 0:
             raise ValueError("context_threshold_bytes must be greater than zero.")
@@ -56,6 +57,7 @@ class Chat:
         self.context_threshold_bytes = context_threshold_bytes
         self.recent_turns_to_keep = recent_turns_to_keep
         self.topic_name = topic_name.strip() if isinstance(topic_name, str) and topic_name.strip() else None
+        self.planner_prompt = planner_prompt.strip() if isinstance(planner_prompt, str) and planner_prompt.strip() else None
 
     @classmethod
     def create_session(cls, *, user_id: str | int) -> ChatSession:
@@ -71,8 +73,8 @@ class Chat:
             raise ValueError("text must not be blank.")
         if self.categorizer_agent is None:
             raise ValueError("categorizer_agent is required to send a reply.")
-        if self.answerer_agent is None and self.planner_agent is None:
-            raise ValueError("At least one response agent is required to send a reply.")
+        if self.answerer_agent is None:
+            raise ValueError("answerer_agent is required to send a reply.")
         if not self.prompts:
             raise ValueError("At least one prompt is required to send a reply.")
 
@@ -168,11 +170,11 @@ class Chat:
             chat = cls(
                 user_id=context.session.user_id,
                 session_id=context.session_id,
-                prompts={"planner": course_topic.planner_prompt} if course_topic is not None else {},
                 briefer_agent=briefer_agent,
                 context_threshold_bytes=context_threshold_bytes,
                 recent_turns_to_keep=recent_turns_to_keep,
                 topic_name=course_topic.name if course_topic is not None else None,
+                planner_prompt=course_topic.planner_prompt if course_topic is not None else None,
             )
             if chat._manage_context(context, force=False):
                 compacted_count += 1
@@ -249,28 +251,68 @@ class Chat:
         context: ChatContext,
         turns: Sequence[ChatTurn],
     ) -> str:
-        if prompt_key == "planner":
-            if self.planner_agent is None:
-                raise ValueError("planner_agent is required when the planner prompt is selected.")
-            messages = self._build_agent_messages(
-                self.planner_agent,
-                *self._build_course_workflow_messages(prompt_key),
-                *self._build_context_messages(context, turns),
-                {"role": "user", "content": user_text},
-            )
-            return self.planner_agent.ask(messages=messages, user=self.user_id)
-
         if self.answerer_agent is None:
-            raise ValueError("answerer_agent is required when a non-planner prompt is selected.")
+            raise ValueError("answerer_agent is required to send a reply.")
 
+        planner_note = self._generate_planner_note(
+            prompt_key=prompt_key,
+            user_text=user_text,
+            context=context,
+            turns=turns,
+        )
         messages = self._build_agent_messages(
             self.answerer_agent,
             *self._build_course_workflow_messages(prompt_key),
             {"role": "system", "content": f"Selected prompt ({prompt_key}):\n{self.prompts[prompt_key]}"},
+            *(
+                [{"role": "system", "content": f"Internal planner note:\n{planner_note}"}]
+                if planner_note
+                else []
+            ),
             *self._build_context_messages(context, turns),
             {"role": "user", "content": user_text},
         )
         return self.answerer_agent.ask(messages=messages, user=self.user_id)
+
+    def _generate_planner_note(
+        self,
+        *,
+        prompt_key: str,
+        user_text: str,
+        context: ChatContext,
+        turns: Sequence[ChatTurn],
+    ) -> str | None:
+        if self.planner_agent is None:
+            return None
+
+        messages = self._build_agent_messages(
+            self.planner_agent,
+            *self._build_internal_planner_messages(prompt_key),
+            *self._build_context_messages(context, turns),
+            {"role": "user", "content": self._build_planner_request(prompt_key, user_text)},
+        )
+
+        try:
+            planner_note = self.planner_agent.ask(messages=messages, user=self.user_id).strip()
+        except Exception:
+            logger.exception(
+                "Internal planner guidance failed for user %s session %s prompt=%s.",
+                self.user_id,
+                context.session_id,
+                prompt_key,
+            )
+            return None
+
+        if not planner_note:
+            logger.warning(
+                "Internal planner guidance was empty for user %s session %s prompt=%s.",
+                self.user_id,
+                context.session_id,
+                prompt_key,
+            )
+            return None
+
+        return planner_note
 
     def _manage_context(self, context: ChatContext, *, force: bool) -> bool:
         turns = self._get_context_turns(context)
@@ -312,9 +354,9 @@ class Chat:
         if self._has_course_planner():
             briefing_sections.append(
                 "Course planning state to preserve:\n"
-                "- Do not lose the topic item list or progression.\n"
-                "- Preserve which items are covered, fully understood, partially understood, or still remaining.\n"
-                "- Keep any estimate of overall topic coverage and the next best item to teach."
+                "- Keep only a brief note about the current item, recent understanding, and the immediate next recommended item.\n"
+                "- Preserve important mistakes or blockers that affect the next teaching step.\n"
+                "- Do not recreate a full syllabus, long ordered item list, or detailed percentage coverage unless the conversation explicitly needs it."
             )
         briefing_sections.extend(
             [
@@ -373,10 +415,6 @@ class Chat:
 
     def _build_routing_guidance(self) -> str:
         guidance: list[str] = []
-        if "planner" in self.prompts:
-            guidance.append(
-                "- Use the planner prompt when the student asks what comes next, when they clearly mastered the current item, or when you need covered-versus-remaining topic progress."
-            )
         if "judge" in self.prompts:
             guidance.append("- Use the judge prompt when the student is attempting an answer that should be checked.")
         if "teacher" in self.prompts:
@@ -394,23 +432,50 @@ class Chat:
             lines.extend(
                 [
                     "Keep the conversation inside the current topic.",
-                    "Preserve which topic items are covered, mastered, in progress, and remaining.",
-                    "Use the planner route for choosing the next teaching item and reporting overall topic coverage.",
+                    "Use the planner only as internal guidance for continuity and the next teaching step.",
+                    "Do not expose internal planning notes or a full course outline unless the student explicitly asks.",
                 ]
             )
             if prompt_key == "teacher":
-                lines.append("Teach the current item without silently replacing the course plan.")
+                lines.append("Teach the best current or next item based on the conversation and planner note.")
             elif prompt_key == "judge":
-                lines.append("If the student has clearly mastered the current item, say so plainly so the next step can use the planner.")
-            elif prompt_key == "planner":
                 lines.append(
-                    "Act as the course planner: infer or maintain an ordered topic-item list, estimate how much is covered, identify what remains, and recommend the next teaching item."
+                    "Judge the student's latest attempt first. If they seem ready to move on, transition briefly instead of dumping a course plan."
                 )
 
         return [{"role": "system", "content": "\n".join(lines)}]
 
     def _has_course_planner(self) -> bool:
-        return "planner" in self.prompts or self.planner_agent is not None
+        return self.planner_prompt is not None or self.planner_agent is not None
+
+    def _build_internal_planner_messages(self, prompt_key: str) -> list[ChatMessage]:
+        lines = [
+            "This planner output is internal guidance for the tutor and must not be written as student-facing prose.",
+            "Return only a brief note about the current item, student status, immediate next item, and reply focus.",
+            "Do not output a full syllabus, ordered course plan, or percentage coverage.",
+        ]
+        if self.topic_name:
+            lines.append(f"Current course topic: {self.topic_name}.")
+        if prompt_key == "judge":
+            lines.append("The tutor is judging the student's latest answer before deciding whether to continue or advance.")
+        elif prompt_key == "teacher":
+            lines.append("The tutor is teaching, clarifying, or choosing the most appropriate next step.")
+
+        return [{"role": "system", "content": "\n".join(lines)}]
+
+    def _build_planner_request(self, prompt_key: str, user_text: str) -> str:
+        return "\n".join(
+            [
+                f"Selected reply mode: {prompt_key}",
+                f"Latest user message: {user_text}",
+                "",
+                "Return exactly four short lines:",
+                "Current item: ...",
+                "Student status: ...",
+                "Next item: ...",
+                "Reply focus: ...",
+            ]
+        )
 
     def _render_context_for_text(self, context: ChatContext, turns: Sequence[ChatTurn]) -> str:
         if not context.summary.strip() and not turns:

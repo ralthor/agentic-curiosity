@@ -98,7 +98,6 @@ def build_chat(
         prompts=[
             ChatPrompt("teacher", resolved_course_topic.teacher_prompt),
             ChatPrompt("judge", resolved_course_topic.judge_prompt),
-            ChatPrompt("planner", resolved_course_topic.planner_prompt),
         ],
         categorizer_agent=OpenAIAgent(
             system=resolved_course_topic.categorizer_prompt,
@@ -126,4 +125,5 @@ def build_chat(
         ),
         context_threshold_bytes=threshold_bytes,
         recent_turns_to_keep=recent_turns,
+        planner_prompt=resolved_course_topic.planner_prompt,
     )

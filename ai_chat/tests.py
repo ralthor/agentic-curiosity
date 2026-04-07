@@ -196,6 +196,7 @@ class ChatTests(TestCase):
         context_threshold_bytes=5_120,
         recent_turns_to_keep=10,
         topic_name=None,
+        planner_prompt=None,
     ):
         categorizer = categorizer_agent or RecordingAgent(model="categorizer", response_text="1")
         answerer = answerer_agent or RecordingAgent(model="answerer", response_text="agent reply")
@@ -210,6 +211,7 @@ class ChatTests(TestCase):
             context_threshold_bytes=context_threshold_bytes,
             recent_turns_to_keep=recent_turns_to_keep,
             topic_name=topic_name,
+            planner_prompt=planner_prompt,
         )
 
     def test_create_session_initializes_a_context(self):
@@ -282,12 +284,17 @@ class ChatTests(TestCase):
         self.assertEqual(ChatTurn.objects.get(session__user_id="user-2").prompt_key, "sales")
         self.assertIn("Selected prompt (sales):", answerer.payloads[-1]["messages"][0]["content"])
 
-    def test_reply_routes_planner_selection_to_planner_agent(self):
-        categorizer = RecordingAgent(model="categorizer", response_text="3")
+    def test_reply_uses_planner_as_internal_guidance_for_answerer(self):
+        categorizer = RecordingAgent(model="categorizer", response_text="1")
         answerer = RecordingAgent(model="answerer", response_text="Teacher answer.")
         planner = RecordingAgent(
             model="planner",
-            response_text="Covered 2 of 5 items. Next: fractions.",
+            response_text=(
+                "Current item: adding 1\n"
+                "Student status: mastered\n"
+                "Next item: adding 2\n"
+                "Reply focus: briefly transition to the next exercise"
+            ),
             system="Plan the next item.",
         )
         chat = self.build_chat(
@@ -298,22 +305,25 @@ class ChatTests(TestCase):
             prompts=[
                 ChatPrompt("teacher", "Teach elementary math."),
                 ChatPrompt("judge", "Judge elementary math answers."),
-                ChatPrompt("planner", "Plan the next elementary math item."),
             ],
+            planner_prompt="Plan the next elementary math item.",
         )
 
         reply = chat.reply("I fully understand that now.", start_session=True)
 
-        self.assertEqual(reply, "Covered 2 of 5 items. Next: fractions.")
-        self.assertFalse(answerer.payloads)
-        self.assertEqual(ChatTurn.objects.get(session__user_id="user-1").prompt_key, "planner")
+        self.assertEqual(reply, "Teacher answer.")
+        self.assertEqual(ChatTurn.objects.get(session__user_id="user-1").prompt_key, "teacher")
         planner_payload = planner.payloads[-1]
         self.assertEqual(planner_payload["messages"][0]["content"], "Plan the next item.")
         self.assertIn("Current course topic: Elementary Math.", planner_payload["messages"][1]["content"])
-        self.assertIn("Act as the course planner", planner_payload["messages"][1]["content"])
-        self.assertEqual(planner_payload["messages"][-1], {"role": "user", "content": "I fully understand that now."})
+        self.assertIn("internal guidance for the tutor", planner_payload["messages"][1]["content"])
+        self.assertIn("Selected reply mode: teacher", planner_payload["messages"][-1]["content"])
+        self.assertIn(
+            "Internal planner note:\nCurrent item: adding 1",
+            answerer.payloads[-1]["messages"][2]["content"],
+        )
 
-    def test_reply_includes_planner_routing_guidance_for_categorizer(self):
+    def test_reply_does_not_expose_planner_route_to_categorizer(self):
         categorizer = RecordingAgent(model="categorizer", response_text="1", system="Pick a route.")
         chat = self.build_chat(
             categorizer_agent=categorizer,
@@ -321,16 +331,47 @@ class ChatTests(TestCase):
             prompts=[
                 ChatPrompt("teacher", "Teach biology basics."),
                 ChatPrompt("judge", "Judge biology answers."),
-                ChatPrompt("planner", "Plan the next biology item."),
             ],
+            planner_prompt="Plan the next biology item.",
         )
 
         chat.reply("What should I study next?", start_session=True)
 
         categorizer_payload = categorizer.payloads[-1]
         self.assertEqual(categorizer_payload["messages"][0]["content"], "Pick a route.")
-        self.assertIn("Use the planner prompt when the student asks what comes next", categorizer_payload["messages"][1]["content"])
         self.assertIn("Current course topic:\nBiology Basics", categorizer_payload["messages"][1]["content"])
+        self.assertIn("1. Teach biology basics.", categorizer_payload["messages"][1]["content"])
+        self.assertIn("2. Judge biology answers.", categorizer_payload["messages"][1]["content"])
+        self.assertNotIn("Plan the next biology item.", categorizer_payload["messages"][1]["content"])
+
+    def test_reply_continues_without_planner_note_when_internal_planner_raises(self):
+        def raise_on_plan(_payload):
+            raise RuntimeError("planning failed")
+
+        answerer = RecordingAgent(model="answerer", response_text="Teacher answer.")
+        chat = self.build_chat(
+            answerer_agent=answerer,
+            planner_agent=RecordingAgent(model="planner", responder=raise_on_plan),
+            prompts=[
+                ChatPrompt("teacher", "Teach elementary math."),
+                ChatPrompt("judge", "Judge elementary math answers."),
+            ],
+            topic_name="Elementary Math",
+            planner_prompt="Plan the next elementary math item.",
+        )
+
+        with self.assertLogs("ai_chat.chat", level="ERROR") as captured:
+            reply = chat.reply("yess", start_session=True)
+
+        self.assertEqual(reply, "Teacher answer.")
+        self.assertIn("Internal planner guidance failed", "\n".join(captured.output))
+        self.assertFalse(
+            any(
+                message["content"].startswith("Internal planner note:")
+                for message in answerer.payloads[-1]["messages"]
+                if message["role"] == "system"
+            )
+        )
 
     def test_start_session_rotates_to_a_new_isolated_session(self):
         answerer = RecordingAgent(model="answerer", response_text="agent reply")
@@ -405,8 +446,8 @@ class ChatTests(TestCase):
             prompts=[
                 ChatPrompt("teacher", "Teach arithmetic."),
                 ChatPrompt("judge", "Judge arithmetic answers."),
-                ChatPrompt("planner", "Plan arithmetic progression."),
             ],
+            planner_prompt="Plan arithmetic progression.",
             context_threshold_bytes=100_000,
             recent_turns_to_keep=1,
         )
@@ -419,7 +460,8 @@ class ChatTests(TestCase):
         briefing_text = briefer.payloads[-1]["messages"][-1]["content"]
         self.assertIn("Current course topic:\nElementary Math", briefing_text)
         self.assertIn("Course planning state to preserve:", briefing_text)
-        self.assertIn("still remaining", briefing_text)
+        self.assertIn("immediate next recommended item", briefing_text)
+        self.assertIn("Do not recreate a full syllabus", briefing_text)
 
     def test_compact_context_logs_decision_and_result(self):
         chat = self.build_chat(
@@ -449,9 +491,9 @@ class ChatTests(TestCase):
             prompts=[
                 ChatPrompt("teacher", "Teach arithmetic."),
                 ChatPrompt("judge", "Judge arithmetic answers."),
-                ChatPrompt("planner", "Plan arithmetic progression."),
             ],
             topic_name=course_topic.name,
+            planner_prompt=course_topic.planner_prompt,
             context_threshold_bytes=100_000,
             recent_turns_to_keep=1,
         )
@@ -470,6 +512,7 @@ class ChatTests(TestCase):
         briefing_text = briefer.payloads[-1]["messages"][-1]["content"]
         self.assertIn("Current course topic:\nElementary Math", briefing_text)
         self.assertIn("Course planning state to preserve:", briefing_text)
+        self.assertIn("immediate next recommended item", briefing_text)
 
     def test_reply_does_not_fail_when_auto_compaction_raises(self):
         def raise_on_brief(_payload):

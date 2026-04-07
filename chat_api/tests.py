@@ -253,7 +253,8 @@ class ChatApiServiceTests(SimpleTestCase):
         self.assertNotIn("temperature", chat.briefer_agent["request_defaults"])
         self.assertEqual(chat.prompts["teacher"], "Teach arithmetic.")
         self.assertEqual(chat.prompts["judge"], "Judge arithmetic answers.")
-        self.assertEqual(chat.prompts["planner"], "Plan arithmetic progression.")
+        self.assertNotIn("planner", chat.prompts)
+        self.assertEqual(chat.planner_prompt, "Plan arithmetic progression.")
         self.assertEqual(chat.topic_name, "Arithmetic")
 
     @override_settings(
@@ -289,3 +290,5 @@ class ChatApiServiceTests(SimpleTestCase):
         self.assertNotIn("temperature", chat.answerer_agent["request_defaults"])
         self.assertNotIn("temperature", chat.planner_agent["request_defaults"])
         self.assertNotIn("temperature", chat.briefer_agent["request_defaults"])
+        self.assertNotIn("planner", chat.prompts)
+        self.assertEqual(chat.planner_prompt, "Plan writing progression.")
