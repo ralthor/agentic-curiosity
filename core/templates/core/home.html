@@ -1,0 +1,880 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Agentic Curiosity</title>
+    <style>
+        :root {
+            --paper: #f7f1e3;
+            --paper-strong: #fffaf0;
+            --ink: #20303a;
+            --muted: #64717a;
+            --line: rgba(32, 48, 58, 0.12);
+            --accent: #d65a31;
+            --accent-deep: #af3e1e;
+            --accent-soft: #ffe1d3;
+            --teal: #2f7c82;
+            --teal-soft: #dff2f0;
+            --shadow: 0 18px 50px rgba(63, 45, 33, 0.12);
+            --radius-lg: 28px;
+            --radius-md: 18px;
+            --radius-sm: 12px;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            color: var(--ink);
+            background:
+                radial-gradient(circle at top left, rgba(214, 90, 49, 0.18), transparent 30%),
+                radial-gradient(circle at right 20%, rgba(47, 124, 130, 0.14), transparent 28%),
+                linear-gradient(180deg, #fff7ef 0%, #f7f1e3 52%, #efe5d6 100%);
+            font-family: "Trebuchet MS", "Gill Sans", sans-serif;
+        }
+
+        body::before,
+        body::after {
+            content: "";
+            position: fixed;
+            inset: auto;
+            width: 22rem;
+            height: 22rem;
+            border-radius: 999px;
+            filter: blur(6px);
+            pointer-events: none;
+            z-index: 0;
+            opacity: 0.45;
+        }
+
+        body::before {
+            top: -6rem;
+            right: -4rem;
+            background: rgba(214, 90, 49, 0.18);
+        }
+
+        body::after {
+            bottom: -8rem;
+            left: -4rem;
+            background: rgba(47, 124, 130, 0.16);
+        }
+
+        .shell {
+            position: relative;
+            z-index: 1;
+            width: min(1180px, calc(100% - 2rem));
+            margin: 0 auto;
+            padding: 2rem 0 3rem;
+        }
+
+        .hero {
+            display: grid;
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+            padding: 1.5rem;
+            border: 1px solid rgba(255, 255, 255, 0.65);
+            border-radius: var(--radius-lg);
+            background: linear-gradient(135deg, rgba(255, 250, 240, 0.94), rgba(255, 240, 228, 0.84));
+            box-shadow: var(--shadow);
+            animation: rise 500ms ease both;
+        }
+
+        .eyebrow,
+        .status-pill,
+        .hint {
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            font-size: 0.74rem;
+            font-weight: 700;
+        }
+
+        .eyebrow {
+            color: var(--accent-deep);
+        }
+
+        h1,
+        h2 {
+            margin: 0;
+            font-family: Georgia, "Palatino Linotype", serif;
+            font-weight: 700;
+            line-height: 1.05;
+        }
+
+        h1 {
+            font-size: clamp(2.5rem, 5vw, 4.2rem);
+            max-width: 12ch;
+        }
+
+        .hero-copy {
+            max-width: 62ch;
+            color: var(--muted);
+            font-size: 1.05rem;
+            line-height: 1.6;
+        }
+
+        .hero-notes {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.75rem;
+        }
+
+        .chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            padding: 0.7rem 1rem;
+            border-radius: 999px;
+            border: 1px solid rgba(32, 48, 58, 0.08);
+            background: rgba(255, 255, 255, 0.72);
+            color: var(--ink);
+            font-size: 0.92rem;
+        }
+
+        .workspace {
+            display: grid;
+            grid-template-columns: minmax(300px, 370px) minmax(0, 1fr);
+            gap: 1rem;
+        }
+
+        .panel {
+            padding: 1.35rem;
+            border: 1px solid rgba(255, 255, 255, 0.65);
+            border-radius: var(--radius-lg);
+            background: rgba(255, 250, 240, 0.86);
+            box-shadow: var(--shadow);
+            backdrop-filter: blur(8px);
+            animation: rise 560ms ease both;
+        }
+
+        .panel:nth-child(2) {
+            animation-delay: 80ms;
+        }
+
+        .panel-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        .status-pill {
+            padding: 0.42rem 0.7rem;
+            border-radius: 999px;
+            background: var(--accent-soft);
+            color: var(--accent-deep);
+        }
+
+        .status-pill.ready {
+            background: var(--teal-soft);
+            color: #18535a;
+        }
+
+        .section {
+            display: grid;
+            gap: 0.85rem;
+            margin-top: 1rem;
+        }
+
+        .field {
+            display: grid;
+            gap: 0.4rem;
+        }
+
+        label {
+            font-size: 0.92rem;
+            font-weight: 700;
+            color: var(--ink);
+        }
+
+        input,
+        textarea,
+        button {
+            font: inherit;
+        }
+
+        input,
+        textarea {
+            width: 100%;
+            padding: 0.85rem 0.95rem;
+            border: 1px solid var(--line);
+            border-radius: var(--radius-sm);
+            background: rgba(255, 255, 255, 0.88);
+            color: var(--ink);
+            transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+        }
+
+        input:focus,
+        textarea:focus {
+            outline: none;
+            border-color: rgba(214, 90, 49, 0.55);
+            box-shadow: 0 0 0 4px rgba(214, 90, 49, 0.12);
+        }
+
+        textarea {
+            resize: vertical;
+            min-height: 110px;
+        }
+
+        .button-row,
+        .quick-prompts {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.7rem;
+        }
+
+        button {
+            border: 0;
+            border-radius: 999px;
+            padding: 0.8rem 1.15rem;
+            cursor: pointer;
+            transition: transform 160ms ease, box-shadow 160ms ease, opacity 160ms ease;
+        }
+
+        button:hover:not(:disabled) {
+            transform: translateY(-1px);
+            box-shadow: 0 10px 22px rgba(32, 48, 58, 0.12);
+        }
+
+        button:disabled {
+            opacity: 0.55;
+            cursor: not-allowed;
+        }
+
+        .primary {
+            background: linear-gradient(135deg, var(--accent), #e07b39);
+            color: #fff7f2;
+        }
+
+        .secondary {
+            background: rgba(255, 255, 255, 0.9);
+            color: var(--ink);
+            border: 1px solid var(--line);
+        }
+
+        .ghost {
+            background: transparent;
+            color: var(--muted);
+            border: 1px dashed rgba(32, 48, 58, 0.22);
+        }
+
+        .meta-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 0.7rem;
+        }
+
+        .meta-card {
+            padding: 0.85rem 0.95rem;
+            border-radius: var(--radius-md);
+            background: rgba(255, 255, 255, 0.78);
+            border: 1px solid rgba(32, 48, 58, 0.08);
+        }
+
+        .meta-label {
+            color: var(--muted);
+            font-size: 0.78rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+        }
+
+        .meta-value {
+            margin-top: 0.35rem;
+            font-size: 1rem;
+            font-weight: 700;
+            word-break: break-all;
+        }
+
+        .chat-stage {
+            display: grid;
+            gap: 1rem;
+            min-height: 620px;
+        }
+
+        .transcript {
+            display: grid;
+            gap: 0.85rem;
+            align-content: start;
+            min-height: 380px;
+            max-height: 520px;
+            overflow-y: auto;
+            padding: 1rem;
+            border-radius: 24px;
+            background:
+                linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(255, 250, 240, 0.94)),
+                linear-gradient(135deg, rgba(214, 90, 49, 0.05), rgba(47, 124, 130, 0.06));
+            border: 1px solid rgba(32, 48, 58, 0.08);
+        }
+
+        .empty-state {
+            display: grid;
+            place-items: center;
+            min-height: 220px;
+            padding: 1.5rem;
+            text-align: center;
+            color: var(--muted);
+            border: 1px dashed rgba(32, 48, 58, 0.18);
+            border-radius: 20px;
+            background: rgba(255, 255, 255, 0.55);
+        }
+
+        .message {
+            max-width: min(84%, 720px);
+            padding: 0.9rem 1rem;
+            border-radius: 20px;
+            line-height: 1.55;
+            box-shadow: 0 8px 18px rgba(32, 48, 58, 0.08);
+            animation: rise 220ms ease both;
+        }
+
+        .message strong {
+            display: block;
+            margin-bottom: 0.3rem;
+            font-size: 0.78rem;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+        }
+
+        .message.user {
+            margin-left: auto;
+            background: linear-gradient(135deg, #d65a31, #ea8d4a);
+            color: #fff8f4;
+            border-bottom-right-radius: 8px;
+        }
+
+        .message.assistant {
+            background: rgba(255, 255, 255, 0.94);
+            color: var(--ink);
+            border-bottom-left-radius: 8px;
+        }
+
+        .message.system {
+            max-width: 100%;
+            background: rgba(47, 124, 130, 0.1);
+            color: #20555b;
+            border: 1px solid rgba(47, 124, 130, 0.15);
+            box-shadow: none;
+        }
+
+        .composer {
+            display: grid;
+            gap: 0.85rem;
+        }
+
+        .composer textarea {
+            min-height: 132px;
+        }
+
+        .status-line {
+            min-height: 1.5rem;
+            color: var(--muted);
+            font-size: 0.94rem;
+        }
+
+        .status-line.error {
+            color: #9b2c17;
+        }
+
+        .hint {
+            color: var(--muted);
+        }
+
+        .endpoint-list {
+            display: grid;
+            gap: 0.45rem;
+            padding: 0;
+            margin: 0;
+            list-style: none;
+            color: var(--muted);
+            font-size: 0.92rem;
+        }
+
+        code {
+            padding: 0.15rem 0.35rem;
+            border-radius: 0.4rem;
+            background: rgba(32, 48, 58, 0.06);
+            font-family: "Consolas", "Courier New", monospace;
+            font-size: 0.92em;
+        }
+
+        @keyframes rise {
+            from {
+                opacity: 0;
+                transform: translateY(12px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @media (max-width: 960px) {
+            .workspace {
+                grid-template-columns: 1fr;
+            }
+
+            .chat-stage {
+                min-height: auto;
+            }
+
+            .transcript {
+                max-height: 420px;
+            }
+        }
+
+        @media (max-width: 640px) {
+            .shell {
+                width: min(100% - 1rem, 1180px);
+                padding-top: 0.75rem;
+            }
+
+            .hero,
+            .panel {
+                padding: 1.05rem;
+                border-radius: 22px;
+            }
+
+            .meta-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .message {
+                max-width: 92%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <main class="shell">
+        <section class="hero">
+            <div class="eyebrow">Elementary Math Console</div>
+            <h1>Talk to the chat API from the Django home page.</h1>
+            <p class="hero-copy">
+                Log in with Django credentials, capture the API token, create a chat session, and send messages without
+                reloading the page. The UI calls the same JSON endpoints your client code would use.
+            </p>
+            <div class="hero-notes">
+                <span class="chip">Prompt router: <strong>teacher</strong> or <strong>judge</strong></span>
+                <span class="chip">Transport: <strong>fetch</strong> with JSON</span>
+                <span class="chip">State: token and current session saved in this browser</span>
+            </div>
+        </section>
+
+        <section class="workspace">
+            <aside class="panel">
+                <div class="panel-header">
+                    <h2>Access</h2>
+                    <span class="status-pill" id="auth-pill">Token Missing</span>
+                </div>
+
+                <form class="section" id="login-form">
+                    <div class="field">
+                        <label for="username">Username</label>
+                        <input id="username" name="username" type="text" autocomplete="username">
+                    </div>
+                    <div class="field">
+                        <label for="password">Password</label>
+                        <input id="password" name="password" type="password" autocomplete="current-password">
+                    </div>
+                    <div class="button-row">
+                        <button class="primary" type="submit">Log In And Get Token</button>
+                        <button class="secondary" type="button" id="token-button">Use Django Session</button>
+                    </div>
+                </form>
+
+                <div class="section">
+                    <div class="field">
+                        <label for="token">API Token</label>
+                        <textarea id="token" spellcheck="false" placeholder="Paste a token here or log in above."></textarea>
+                    </div>
+                    <div class="button-row">
+                        <button class="secondary" type="button" id="save-token-button">Save Token</button>
+                        <button class="ghost" type="button" id="clear-state-button">Clear Local State</button>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <div class="panel-header">
+                        <h2>Session</h2>
+                        <span class="status-pill" id="session-pill">No Session</span>
+                    </div>
+                    <div class="meta-grid">
+                        <div class="meta-card">
+                            <div class="meta-label">Current User</div>
+                            <div class="meta-value" id="current-user">anonymous</div>
+                        </div>
+                        <div class="meta-card">
+                            <div class="meta-label">Current Session</div>
+                            <div class="meta-value" id="current-session">none</div>
+                        </div>
+                    </div>
+                    <div class="field">
+                        <label for="session-id">Session Id</label>
+                        <input id="session-id" type="text" inputmode="numeric" placeholder="Create one or paste an existing session id.">
+                    </div>
+                    <div class="button-row">
+                        <button class="primary" type="button" id="create-session-button">Create Session</button>
+                        <button class="secondary" type="button" id="use-session-button">Use Session Id</button>
+                    </div>
+                    <p class="hint">The page keeps only browser-side transcript state. The backend keeps the real chat context per session.</p>
+                </div>
+
+                <div class="section">
+                    <h2>API Routes</h2>
+                    <ul class="endpoint-list">
+                        <li><code>{{ chat_api_login_url }}</code></li>
+                        <li><code>{{ chat_api_token_url }}</code></li>
+                        <li><code>{{ chat_api_sessions_url }}</code></li>
+                        <li><code>{{ chat_api_chat_url }}</code></li>
+                    </ul>
+                </div>
+            </aside>
+
+            <section class="panel chat-stage">
+                <div class="panel-header">
+                    <h2>Chat</h2>
+                    <span class="status-pill ready">AJAX Only</span>
+                </div>
+
+                <div class="quick-prompts">
+                    <button class="secondary quick-prompt" type="button" data-message="Teach me addition with a simple example.">Teach Addition</button>
+                    <button class="secondary quick-prompt" type="button" data-message="7 + 5 = 13">Judge My Answer</button>
+                    <button class="secondary quick-prompt" type="button" data-message="What is 9 minus 4?">Ask A Question</button>
+                </div>
+
+                <div class="transcript" id="transcript" aria-live="polite">
+                    <div class="empty-state" id="empty-state">
+                        Start by logging in or pasting a token, then create a session and send a message.
+                    </div>
+                </div>
+
+                <form class="composer" id="chat-form">
+                    <div class="field">
+                        <label for="message">Message</label>
+                        <textarea id="message" placeholder="Ask for a lesson or submit an answer like 8 + 3 = 11."></textarea>
+                    </div>
+                    <div class="button-row">
+                        <button class="primary" type="submit" id="send-button">Send Message</button>
+                        <button class="secondary" type="button" id="new-thread-button">New Session And Send Next Message</button>
+                    </div>
+                    <div class="status-line" id="status-line">Waiting for input.</div>
+                </form>
+            </section>
+        </section>
+    </main>
+
+    <script>
+        const apiConfig = {
+            loginUrl: "{{ chat_api_login_url|escapejs }}",
+            tokenUrl: "{{ chat_api_token_url|escapejs }}",
+            sessionsUrl: "{{ chat_api_sessions_url|escapejs }}",
+            chatUrl: "{{ chat_api_chat_url|escapejs }}"
+        };
+
+        const storageKeys = {
+            token: "agentic-curiosity.token",
+            sessionId: "agentic-curiosity.sessionId",
+            username: "agentic-curiosity.username"
+        };
+
+        const state = {
+            token: localStorage.getItem(storageKeys.token) || "",
+            sessionId: localStorage.getItem(storageKeys.sessionId) || "",
+            username: localStorage.getItem(storageKeys.username) || "anonymous"
+        };
+
+        const authPill = document.getElementById("auth-pill");
+        const sessionPill = document.getElementById("session-pill");
+        const currentUser = document.getElementById("current-user");
+        const currentSession = document.getElementById("current-session");
+        const tokenField = document.getElementById("token");
+        const sessionField = document.getElementById("session-id");
+        const messageField = document.getElementById("message");
+        const transcript = document.getElementById("transcript");
+        const emptyState = document.getElementById("empty-state");
+        const statusLine = document.getElementById("status-line");
+        const sendButton = document.getElementById("send-button");
+        const createSessionButton = document.getElementById("create-session-button");
+        const useSessionButton = document.getElementById("use-session-button");
+        const saveTokenButton = document.getElementById("save-token-button");
+        const clearStateButton = document.getElementById("clear-state-button");
+        const tokenButton = document.getElementById("token-button");
+        const newThreadButton = document.getElementById("new-thread-button");
+        const loginForm = document.getElementById("login-form");
+        const chatForm = document.getElementById("chat-form");
+
+        function persistState() {
+            localStorage.setItem(storageKeys.token, state.token);
+            localStorage.setItem(storageKeys.sessionId, state.sessionId);
+            localStorage.setItem(storageKeys.username, state.username);
+        }
+
+        function syncUi() {
+            tokenField.value = state.token;
+            sessionField.value = state.sessionId;
+            currentUser.textContent = state.username || "anonymous";
+            currentSession.textContent = state.sessionId || "none";
+
+            authPill.textContent = state.token ? "Token Ready" : "Token Missing";
+            authPill.classList.toggle("ready", Boolean(state.token));
+
+            sessionPill.textContent = state.sessionId ? "Session Active" : "No Session";
+            sessionPill.classList.toggle("ready", Boolean(state.sessionId));
+
+            sendButton.disabled = !state.token;
+            createSessionButton.disabled = !state.token;
+            useSessionButton.disabled = !state.token;
+            newThreadButton.disabled = !state.token;
+        }
+
+        function setStatus(message, type = "info") {
+            statusLine.textContent = message;
+            statusLine.classList.toggle("error", type === "error");
+        }
+
+        function headers({ json = true, token = true } = {}) {
+            const result = {};
+            if (json) {
+                result["Content-Type"] = "application/json";
+            }
+            if (token && state.token) {
+                result["Authorization"] = `Token ${state.token}`;
+            }
+            return result;
+        }
+
+        function removeEmptyState() {
+            if (emptyState && emptyState.parentNode) {
+                emptyState.parentNode.removeChild(emptyState);
+            }
+        }
+
+        function appendMessage(role, title, content) {
+            removeEmptyState();
+
+            const bubble = document.createElement("article");
+            bubble.className = `message ${role}`;
+
+            const heading = document.createElement("strong");
+            heading.textContent = title;
+            bubble.appendChild(heading);
+
+            const body = document.createElement("div");
+            body.textContent = content;
+            bubble.appendChild(body);
+
+            transcript.appendChild(bubble);
+            transcript.scrollTop = transcript.scrollHeight;
+        }
+
+        async function requestJson(url, options = {}) {
+            const response = await fetch(url, {
+                credentials: "same-origin",
+                ...options
+            });
+
+            let payload = {};
+            try {
+                payload = await response.json();
+            } catch (_error) {
+                payload = {};
+            }
+
+            if (!response.ok) {
+                const message = payload.error || `Request failed with status ${response.status}.`;
+                throw new Error(message);
+            }
+
+            return payload;
+        }
+
+        async function createSession() {
+            const payload = await requestJson(apiConfig.sessionsUrl, {
+                method: "POST",
+                headers: headers()
+            });
+
+            state.sessionId = String(payload.session_id);
+            persistState();
+            syncUi();
+            appendMessage("system", "Session", `Created session ${state.sessionId}.`);
+            return state.sessionId;
+        }
+
+        async function ensureSession() {
+            const explicitSession = sessionField.value.trim();
+            if (explicitSession) {
+                state.sessionId = explicitSession;
+                persistState();
+                syncUi();
+            }
+
+            if (state.sessionId) {
+                return state.sessionId;
+            }
+
+            setStatus("Creating a chat session...");
+            return createSession();
+        }
+
+        async function sendMessage({ forceNewSession = false } = {}) {
+            const text = messageField.value.trim();
+            if (!text) {
+                setStatus("Write a message before sending.", "error");
+                return;
+            }
+
+            if (!state.token) {
+                setStatus("Log in or paste a token first.", "error");
+                return;
+            }
+
+            try {
+                if (forceNewSession) {
+                    state.sessionId = "";
+                    persistState();
+                    syncUi();
+                }
+
+                const sessionId = await ensureSession();
+                appendMessage("user", "You", text);
+                messageField.value = "";
+                setStatus("Waiting for the chat API...");
+
+                const payload = await requestJson(apiConfig.chatUrl, {
+                    method: "POST",
+                    headers: headers(),
+                    body: JSON.stringify({
+                        session_id: Number(sessionId),
+                        text
+                    })
+                });
+
+                appendMessage("assistant", "Tutor", payload.response);
+                setStatus(`Reply received for session ${payload.session_id}.`);
+            } catch (error) {
+                setStatus(error.message, "error");
+                appendMessage("system", "Error", error.message);
+            }
+        }
+
+        loginForm.addEventListener("submit", async (event) => {
+            event.preventDefault();
+            const username = document.getElementById("username").value.trim();
+            const password = document.getElementById("password").value;
+
+            if (!username || !password) {
+                setStatus("Enter both username and password.", "error");
+                return;
+            }
+
+            try {
+                setStatus("Logging in and issuing a token...");
+                const payload = await requestJson(apiConfig.loginUrl, {
+                    method: "POST",
+                    headers: headers({ token: false }),
+                    body: JSON.stringify({ username, password })
+                });
+
+                state.token = payload.token;
+                state.username = payload.username;
+                persistState();
+                syncUi();
+                document.getElementById("password").value = "";
+                setStatus(`Logged in as ${payload.username}.`);
+                appendMessage("system", "Auth", `Authenticated as ${payload.username}.`);
+            } catch (error) {
+                setStatus(error.message, "error");
+            }
+        });
+
+        tokenButton.addEventListener("click", async () => {
+            try {
+                setStatus("Requesting a token from the current Django session...");
+                const payload = await requestJson(apiConfig.tokenUrl, {
+                    method: "POST",
+                    headers: headers({ token: false })
+                });
+
+                state.token = payload.token;
+                state.username = payload.username;
+                persistState();
+                syncUi();
+                setStatus(`Token loaded for ${payload.username}.`);
+                appendMessage("system", "Auth", `Loaded token for ${payload.username}.`);
+            } catch (error) {
+                setStatus(error.message, "error");
+            }
+        });
+
+        saveTokenButton.addEventListener("click", () => {
+            state.token = tokenField.value.trim();
+            persistState();
+            syncUi();
+            setStatus(state.token ? "Token saved in this browser." : "Token cleared from this browser.");
+        });
+
+        clearStateButton.addEventListener("click", () => {
+            state.token = "";
+            state.sessionId = "";
+            state.username = "anonymous";
+            persistState();
+            syncUi();
+            setStatus("Local token and session state cleared.");
+            appendMessage("system", "State", "Cleared token and session from local browser storage.");
+        });
+
+        createSessionButton.addEventListener("click", async () => {
+            if (!state.token) {
+                setStatus("Log in or paste a token first.", "error");
+                return;
+            }
+
+            try {
+                setStatus("Creating a fresh session...");
+                await createSession();
+                setStatus(`Session ${state.sessionId} is ready.`);
+            } catch (error) {
+                setStatus(error.message, "error");
+            }
+        });
+
+        useSessionButton.addEventListener("click", () => {
+            const chosen = sessionField.value.trim();
+            if (!chosen) {
+                setStatus("Enter a session id first.", "error");
+                return;
+            }
+
+            state.sessionId = chosen;
+            persistState();
+            syncUi();
+            setStatus(`Using session ${chosen}.`);
+            appendMessage("system", "Session", `Using existing session ${chosen}.`);
+        });
+
+        chatForm.addEventListener("submit", async (event) => {
+            event.preventDefault();
+            await sendMessage();
+        });
+
+        newThreadButton.addEventListener("click", async () => {
+            await sendMessage({ forceNewSession: true });
+        });
+
+        document.querySelectorAll(".quick-prompt").forEach((button) => {
+            button.addEventListener("click", () => {
+                messageField.value = button.dataset.message || "";
+                messageField.focus();
+            });
+        });
+
+        syncUi();
+        setStatus(state.token ? "Ready. Create a session or send a message." : "Waiting for input.");
+    </script>
+</body>
+</html>
