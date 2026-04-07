@@ -41,6 +41,7 @@ AI_CHAT_MODEL = os.environ.get('AI_CHAT_MODEL')
 AI_CHAT_CATEGORIZER_MODEL = os.environ.get('AI_CHAT_CATEGORIZER_MODEL')
 AI_CHAT_ANSWERER_MODEL = os.environ.get('AI_CHAT_ANSWERER_MODEL')
 AI_CHAT_BRIEFER_MODEL = os.environ.get('AI_CHAT_BRIEFER_MODEL')
+AI_CHAT_LOG_LEVEL = os.environ.get('AI_CHAT_LOG_LEVEL', 'INFO')
 
 
 # Application definition
@@ -138,3 +139,27 @@ STATIC_URL = 'static/'
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'standard': {
+            'format': '[{asctime}] {levelname} {name}: {message}',
+            'style': '{',
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'standard',
+        },
+    },
+    'loggers': {
+        'ai_chat': {
+            'handlers': ['console'],
+            'level': AI_CHAT_LOG_LEVEL,
+            'propagate': False,
+        },
+    },
+}
