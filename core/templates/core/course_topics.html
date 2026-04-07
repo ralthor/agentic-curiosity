@@ -255,8 +255,8 @@
             <div class="eyebrow">Topic Studio</div>
             <h1>Store reusable prompt sets as course topics.</h1>
             <p>
-                Each topic defines the six prompts used by the chat session flow: teacher, judge, categorizer,
-                answerer, planner, and briefer. Topics created here become selectable on the chat page for new sessions.
+                Each topic defines the six prompts used by the chat session flow plus an expectation list that the
+                planner tracks across each session. Topics created here become selectable on the chat page for new sessions.
             </p>
             <div class="top-links">
                 <a href="{{ home_url }}">Open Chat Console</a>
@@ -311,6 +311,10 @@
                     <div class="field">
                         <label for="briefer_prompt">Briefer Prompt</label>
                         <textarea id="briefer_prompt" name="briefer_prompt" placeholder="Describe how the session should be condensed."></textarea>
+                    </div>
+                    <div class="field">
+                        <label for="expectations">Expectations</label>
+                        <textarea id="expectations" name="expectations" placeholder="Enter one expectation per line, for example:&#10;Add within 20 using objects, drawings, or equations.&#10;Subtract within 20 using objects, drawings, or equations."></textarea>
                     </div>
                     <div class="button-row">
                         <button class="primary" type="submit" id="create-topic-button">Create Course Topic</button>
@@ -441,6 +445,18 @@
                 summary.textContent = `Created ${new Date(topic.created_at).toLocaleString()}`;
                 card.appendChild(summary);
 
+                const expectations = document.createElement("details");
+                const expectationSummary = document.createElement("summary");
+                expectationSummary.textContent = "Expectations";
+                expectations.appendChild(expectationSummary);
+
+                const expectationPre = document.createElement("pre");
+                expectationPre.textContent = (topic.expectations || []).length
+                    ? topic.expectations.map((item) => `- ${item}`).join("\n")
+                    : "(none)";
+                expectations.appendChild(expectationPre);
+                card.appendChild(expectations);
+
                 [
                     ["Teacher Prompt", topic.teacher_prompt],
                     ["Judge Prompt", topic.judge_prompt],
@@ -528,6 +544,10 @@
 
             const formData = new FormData(topicForm);
             const payload = Object.fromEntries(formData.entries());
+            payload.expectations = String(payload.expectations || "")
+                .split(/\r?\n/)
+                .map((item) => item.trim())
+                .filter(Boolean);
 
             try {
                 setStatus("Creating course topic...");

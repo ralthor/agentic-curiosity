@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import re
 from collections.abc import Mapping, Sequence
@@ -7,6 +8,8 @@ from dataclasses import dataclass
 
 from django.db import transaction
 from django.utils import timezone
+
+from chat_api.course_state import build_course_state_note, normalize_course_state
 
 from .agents import Agent, ChatMessage
 from .exceptions import AgentResponseError
@@ -19,6 +22,12 @@ logger = logging.getLogger(__name__)
 class ChatPrompt:
     key: str
     text: str
+
+
+@dataclass(frozen=True)
+class PlannerGuidance:
+    note: str | None
+    course_state: dict[str, object]
 
 
 PromptCollection = Mapping[str, str] | Sequence[ChatPrompt | tuple[str, str]]
@@ -41,6 +50,7 @@ class Chat:
         recent_turns_to_keep: int = 10,
         topic_name: str | None = None,
         planner_prompt: str | None = None,
+        course_state: dict[str, object] | None = None,
     ) -> None:
         if context_threshold_bytes <= 0:
             raise ValueError("context_threshold_bytes must be greater than zero.")
@@ -58,6 +68,7 @@ class Chat:
         self.recent_turns_to_keep = recent_turns_to_keep
         self.topic_name = topic_name.strip() if isinstance(topic_name, str) and topic_name.strip() else None
         self.planner_prompt = planner_prompt.strip() if isinstance(planner_prompt, str) and planner_prompt.strip() else None
+        self.course_state = normalize_course_state(course_state)
 
     @classmethod
     def create_session(cls, *, user_id: str | int) -> ChatSession:
@@ -96,12 +107,13 @@ class Chat:
             len(context.summary),
         )
         prompt_key = self._categorize_prompt_key(cleaned_text, context, turns)
-        response = self._generate_response(
+        response, updated_course_state = self._generate_response(
             prompt_key=prompt_key,
             user_text=cleaned_text,
             context=context,
             turns=turns,
         )
+        self.course_state = normalize_course_state(updated_course_state)
 
         with transaction.atomic():
             session = ChatSession.objects.select_for_update().get(pk=session.pk, user_id=self.user_id)
@@ -112,7 +124,10 @@ class Chat:
                 agent_response=response,
             )
             now = timezone.now()
-            ChatSession.objects.filter(pk=session.pk).update(updated_at=now)
+            ChatSession.objects.filter(pk=session.pk).update(
+                updated_at=now,
+                course_state=self.course_state,
+            )
             ChatContext.objects.filter(session=session).update(updated_at=now)
         logger.info(
             "Stored chat turn %s for user %s session %s prompt=%s response_length=%s.",
@@ -175,6 +190,7 @@ class Chat:
                 recent_turns_to_keep=recent_turns_to_keep,
                 topic_name=course_topic.name if course_topic is not None else None,
                 planner_prompt=course_topic.planner_prompt if course_topic is not None else None,
+                course_state=context.session.course_state,
             )
             if chat._manage_context(context, force=False):
                 compacted_count += 1
@@ -250,11 +266,11 @@ class Chat:
         user_text: str,
         context: ChatContext,
         turns: Sequence[ChatTurn],
-    ) -> str:
+    ) -> tuple[str, dict[str, object]]:
         if self.answerer_agent is None:
             raise ValueError("answerer_agent is required to send a reply.")
 
-        planner_note = self._generate_planner_note(
+        planner_guidance = self._generate_planner_guidance(
             prompt_key=prompt_key,
             user_text=user_text,
             context=context,
@@ -265,35 +281,39 @@ class Chat:
             *self._build_course_workflow_messages(prompt_key),
             {"role": "system", "content": f"Selected prompt ({prompt_key}):\n{self.prompts[prompt_key]}"},
             *(
-                [{"role": "system", "content": f"Internal planner note:\n{planner_note}"}]
-                if planner_note
+                [{"role": "system", "content": f"Internal planner note:\n{planner_guidance.note}"}]
+                if planner_guidance.note
                 else []
             ),
             *self._build_context_messages(context, turns),
             {"role": "user", "content": user_text},
         )
-        return self.answerer_agent.ask(messages=messages, user=self.user_id)
+        return self.answerer_agent.ask(messages=messages, user=self.user_id), planner_guidance.course_state
 
-    def _generate_planner_note(
+    def _generate_planner_guidance(
         self,
         *,
         prompt_key: str,
         user_text: str,
         context: ChatContext,
         turns: Sequence[ChatTurn],
-    ) -> str | None:
+    ) -> PlannerGuidance:
         if self.planner_agent is None:
-            return None
+            return self._fallback_planner_guidance()
 
         messages = self._build_agent_messages(
             self.planner_agent,
             *self._build_internal_planner_messages(prompt_key),
+            *self._build_course_state_messages(),
             *self._build_context_messages(context, turns),
             {"role": "user", "content": self._build_planner_request(prompt_key, user_text)},
         )
 
         try:
-            planner_note = self.planner_agent.ask(messages=messages, user=self.user_id).strip()
+            raw_guidance = self.planner_agent.ask(messages=messages, user=self.user_id).strip()
+            if not raw_guidance:
+                raise AgentResponseError("The planner agent returned an empty course-state update.")
+            return self._parse_planner_guidance(raw_guidance)
         except Exception:
             logger.exception(
                 "Internal planner guidance failed for user %s session %s prompt=%s.",
@@ -301,18 +321,7 @@ class Chat:
                 context.session_id,
                 prompt_key,
             )
-            return None
-
-        if not planner_note:
-            logger.warning(
-                "Internal planner guidance was empty for user %s session %s prompt=%s.",
-                self.user_id,
-                context.session_id,
-                prompt_key,
-            )
-            return None
-
-        return planner_note
+            return self._fallback_planner_guidance()
 
     def _manage_context(self, context: ChatContext, *, force: bool) -> bool:
         turns = self._get_context_turns(context)
@@ -353,11 +362,14 @@ class Chat:
             briefing_sections.append(f"Current course topic:\n{self.topic_name}")
         if self._has_course_planner():
             briefing_sections.append(
-                "Course planning state to preserve:\n"
-                "- Keep only a brief note about the current item, recent understanding, and the immediate next recommended item.\n"
-                "- Preserve important mistakes or blockers that affect the next teaching step.\n"
-                "- Do not recreate a full syllabus, long ordered item list, or detailed percentage coverage unless the conversation explicitly needs it."
+                "Course planning evidence to preserve:\n"
+                "- The session already stores expectation scores, overall progress, and the current and next teaching items.\n"
+                "- Preserve only the mistakes, evidence of understanding, blockers, and recent transitions that justify those tracked scores and next steps.\n"
+                "- Do not recreate the full expectation list, score table, or full course outline in the condensed summary."
             )
+            course_state_note = build_course_state_note(self.course_state)
+            if course_state_note:
+                briefing_sections.append(f"Persisted course state:\n{course_state_note}")
         briefing_sections.extend(
             [
                 "Value recent details more than old details.\nReturn only the condensed context text.",
@@ -432,7 +444,7 @@ class Chat:
             lines.extend(
                 [
                     "Keep the conversation inside the current topic.",
-                    "Use the planner only as internal guidance for continuity and the next teaching step.",
+                    "Use the planner and tracked course state only as internal guidance for continuity, progress scoring, and the next teaching step.",
                     "Do not expose internal planning notes or a full course outline unless the student explicitly asks.",
                 ]
             )
@@ -446,13 +458,23 @@ class Chat:
         return [{"role": "system", "content": "\n".join(lines)}]
 
     def _has_course_planner(self) -> bool:
-        return self.planner_prompt is not None or self.planner_agent is not None
+        return (
+            self.planner_prompt is not None
+            or self.planner_agent is not None
+            or bool(self.course_state.get("expectations"))
+        )
 
     def _build_internal_planner_messages(self, prompt_key: str) -> list[ChatMessage]:
         lines = [
-            "This planner output is internal guidance for the tutor and must not be written as student-facing prose.",
-            "Return only a brief note about the current item, student status, immediate next item, and reply focus.",
-            "Do not output a full syllabus, ordered course plan, or percentage coverage.",
+            "This planner output updates the persisted course-state tracker for the tutor and must not be written as student-facing prose.",
+            "Return only valid JSON and no surrounding commentary or code fences.",
+            (
+                'Use this exact schema: {"summary":"...","current_item":"...","next_item":"...","reply_focus":"...",'
+                '"expectations":[{"expectation":"<unchanged text>","score":0,"evidence":"..."}]}.'
+            ),
+            "Keep the expectation list in the same order and do not invent, rename, or remove expectations.",
+            "Use score 0-4 where 0=not started, 1=introduced, 2=developing, 3=secure, and 4=mastered.",
+            "Keep summary, reply_focus, and each evidence note brief.",
         ]
         if self.topic_name:
             lines.append(f"Current course topic: {self.topic_name}.")
@@ -469,13 +491,49 @@ class Chat:
                 f"Selected reply mode: {prompt_key}",
                 f"Latest user message: {user_text}",
                 "",
-                "Return exactly four short lines:",
-                "Current item: ...",
-                "Student status: ...",
-                "Next item: ...",
-                "Reply focus: ...",
+                "Update the course state for this turn, keeping expectation scores aligned to the stored list.",
+                "Use the latest user message plus the conversation context as evidence.",
+                "Return only the JSON object.",
             ]
         )
+
+    def _build_course_state_messages(self) -> list[ChatMessage]:
+        if not self.course_state.get("expectations"):
+            return []
+
+        return [
+            {
+                "role": "system",
+                "content": (
+                    "Current persisted course state:\n"
+                    f"{json.dumps(self.course_state, indent=2, ensure_ascii=True)}"
+                ),
+            }
+        ]
+
+    def _fallback_planner_guidance(self) -> PlannerGuidance:
+        note = build_course_state_note(self.course_state)
+        return PlannerGuidance(note=note or None, course_state=self.course_state)
+
+    def _parse_planner_guidance(self, raw_guidance: str) -> PlannerGuidance:
+        parsed = json.loads(self._strip_json_fence(raw_guidance))
+        if not isinstance(parsed, dict):
+            raise AgentResponseError("The planner agent must return a JSON object.")
+
+        expectations = [item["expectation"] for item in self.course_state.get("expectations", [])]
+        course_state = normalize_course_state(
+            parsed,
+            expectations=expectations or None,
+        )
+        note = build_course_state_note(course_state)
+        return PlannerGuidance(note=note or None, course_state=course_state)
+
+    def _strip_json_fence(self, raw_guidance: str) -> str:
+        stripped = raw_guidance.strip()
+        if stripped.startswith("```"):
+            stripped = re.sub(r"^```(?:json)?\s*", "", stripped, flags=re.IGNORECASE)
+            stripped = re.sub(r"\s*```$", "", stripped)
+        return stripped.strip()
 
     def _render_context_for_text(self, context: ChatContext, turns: Sequence[ChatTurn]) -> str:
         if not context.summary.strip() and not turns:

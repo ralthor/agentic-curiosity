@@ -6,6 +6,7 @@ from django.db import transaction
 from ai_chat import Chat, ChatPrompt, OpenAIAgent
 from ai_chat.models import ChatContext, ChatSession
 
+from .course_state import build_initial_course_state, normalize_course_state
 from .models import CourseTopic
 
 DEFAULT_CATEGORIZER_MODEL = "gpt-5-mini"
@@ -37,6 +38,7 @@ def create_session(*, user, course_topic: CourseTopic) -> ChatSession:
         session = ChatSession.objects.create(
             user_id=str(user.pk),
             course_topic=course_topic,
+            course_state=build_initial_course_state(getattr(course_topic, "expectations", [])),
         )
         ChatContext.objects.create(session=session)
     return session
@@ -65,6 +67,7 @@ def build_chat(
     *,
     user,
     session_id: int | None = None,
+    session: ChatSession | None = None,
     course_topic: CourseTopic | None = None,
 ) -> Chat:
     threshold_bytes = getattr(settings, "AI_CHAT_CONTEXT_THRESHOLD_BYTES", 5_120)
@@ -89,6 +92,15 @@ def build_chat(
         user=user,
         session_id=session_id,
         course_topic=course_topic,
+    )
+    resolved_session = session
+    if resolved_session is None and session_id is not None and course_topic is None:
+        resolved_session = get_session(user=user, session_id=session_id)
+    resolved_course_state = normalize_course_state(
+        resolved_session.course_state if resolved_session is not None else build_initial_course_state(
+            getattr(resolved_course_topic, "expectations", [])
+        ),
+        expectations=getattr(resolved_course_topic, "expectations", []),
     )
 
     return Chat(
@@ -126,4 +138,5 @@ def build_chat(
         context_threshold_bytes=threshold_bytes,
         recent_turns_to_keep=recent_turns,
         planner_prompt=resolved_course_topic.planner_prompt,
+        course_state=resolved_course_state,
     )

@@ -1,14 +1,24 @@
 from django.contrib import admin
 
+from chat_api.course_state import normalize_course_state
+
 from .models import ChatContext, ChatSession, ChatTurn
 
 
 @admin.register(ChatSession)
 class ChatSessionAdmin(admin.ModelAdmin):
-    list_display = ("id", "user_id", "course_topic", "created_at", "updated_at")
+    list_display = ("id", "user_id", "course_topic", "course_progress", "created_at", "updated_at")
     list_select_related = ("course_topic",)
     search_fields = ("user_id", "course_topic__name")
     ordering = ("-created_at", "-id")
+
+    @admin.display(description="Progress")
+    def course_progress(self, obj: ChatSession) -> str:
+        state = normalize_course_state(
+            obj.course_state,
+            expectations=obj.course_topic.expectations if obj.course_topic is not None else None,
+        )
+        return f"{state['overall_progress']}%"
 
 
 @admin.register(ChatTurn)

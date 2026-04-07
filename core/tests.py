@@ -20,5 +20,6 @@ class HomePageTests(SimpleTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTemplateUsed(response, "core/course_topics.html")
         self.assertContains(response, "Store reusable prompt sets as course topics.")
+        self.assertContains(response, "Expectations")
         self.assertContains(response, "Create Course Topic")
         self.assertContains(response, "Use Django Session")

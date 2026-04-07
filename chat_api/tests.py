@@ -8,6 +8,7 @@ from django.test import SimpleTestCase, TestCase, override_settings
 from ai_chat import Agent, Chat, ChatPrompt
 from ai_chat.models import ChatContext, ChatSession, ChatTurn
 
+from .course_state import build_initial_course_state
 from .models import ApiToken, CourseTopic
 from .services import build_chat, create_session as create_topic_session
 
@@ -33,6 +34,10 @@ class ChatApiTests(TestCase):
             answerer_prompt="Answer clearly for the selected arithmetic prompt.",
             planner_prompt="Plan the next arithmetic item and report covered versus remaining items.",
             briefer_prompt="Condense the arithmetic tutoring session.",
+            expectations=[
+                "Add within 20 using objects, drawings, or equations.",
+                "Subtract within 20 using objects, drawings, or equations.",
+            ],
         )
 
     def _post_json(self, path, payload, **extra):
@@ -106,9 +111,14 @@ class ChatApiTests(TestCase):
         self.assertEqual(session.user_id, str(self.user.pk))
         self.assertEqual(session.course_topic, self.course_topic)
         self.assertTrue(ChatContext.objects.filter(session=session).exists())
+        self.assertEqual(session.course_state["overall_progress"], 0)
         self.assertEqual(
             response.json()["course_topic"],
             {"id": self.course_topic.pk, "name": self.course_topic.name},
+        )
+        self.assertEqual(
+            response.json()["course_state"],
+            build_initial_course_state(self.course_topic.expectations),
         )
 
     def test_course_topics_endpoint_lists_existing_topics(self):
@@ -123,6 +133,7 @@ class ChatApiTests(TestCase):
         topic_payload = next(topic for topic in response.json()["topics"] if topic["id"] == self.course_topic.pk)
         self.assertEqual(topic_payload["name"], self.course_topic.name)
         self.assertEqual(topic_payload["planner_prompt"], self.course_topic.planner_prompt)
+        self.assertEqual(topic_payload["expectations"], self.course_topic.expectations)
 
     def test_course_topics_endpoint_creates_a_topic(self):
         token = ApiToken.issue_for_user(self.user)
@@ -137,6 +148,10 @@ class ChatApiTests(TestCase):
                 "answerer_prompt": "Answer as a physics tutor.",
                 "planner_prompt": "Plan the next physics item and report topic progress.",
                 "briefer_prompt": "Condense the physics session.",
+                "expectations": [
+                    "Explain motion using speed, direction, and simple forces.",
+                    "Relate pushes and pulls to changes in movement.",
+                ],
             },
             **self._authorization_header(token),
         )
@@ -145,6 +160,7 @@ class ChatApiTests(TestCase):
         topic = CourseTopic.objects.get(name="Physics Intro")
         self.assertEqual(response.json()["topic"]["id"], topic.pk)
         self.assertEqual(topic.planner_prompt, "Plan the next physics item and report topic progress.")
+        self.assertEqual(topic.expectations[0], "Explain motion using speed, direction, and simple forces.")
 
     def test_session_detail_returns_the_stored_course_topic(self):
         token = ApiToken.issue_for_user(self.user)
@@ -159,6 +175,10 @@ class ChatApiTests(TestCase):
         self.assertEqual(
             response.json()["course_topic"],
             {"id": self.course_topic.pk, "name": self.course_topic.name},
+        )
+        self.assertEqual(
+            response.json()["course_state"],
+            build_initial_course_state(self.course_topic.expectations),
         )
 
     def test_chat_rejects_sessions_owned_by_another_user(self):
@@ -178,7 +198,7 @@ class ChatApiTests(TestCase):
         token = ApiToken.issue_for_user(self.user)
         session = create_topic_session(user=self.user, course_topic=self.course_topic)
 
-        def build_test_chat(*, user, session_id=None, course_topic=None):
+        def build_test_chat(*, user, session_id=None, session=None, course_topic=None):
             self.assertEqual(user.pk, self.user.pk)
             self.assertEqual(session_id, session.pk)
             self.assertEqual(course_topic, self.course_topic)
@@ -194,6 +214,7 @@ class ChatApiTests(TestCase):
                     model="answerer",
                     response_text="Correct. 2 + 2 = 4. Did you understand?",
                 ),
+                course_state=session.course_state,
             )
 
         with patch("chat_api.views.build_chat", side_effect=build_test_chat):
@@ -209,6 +230,7 @@ class ChatApiTests(TestCase):
             {
                 "session_id": session.pk,
                 "response": "Correct. 2 + 2 = 4. Did you understand?",
+                "course_state": build_initial_course_state(self.course_topic.expectations),
             },
         )
         turn = ChatTurn.objects.get(session=session)
@@ -240,6 +262,10 @@ class ChatApiServiceTests(SimpleTestCase):
                     planner_prompt="Plan arithmetic progression.",
                     briefer_prompt="Condense arithmetic sessions.",
                     name="Arithmetic",
+                    expectations=[
+                        "Add within 20 using objects, drawings, or equations.",
+                        "Subtract within 20 using objects, drawings, or equations.",
+                    ],
                 ),
             )
 
@@ -256,6 +282,8 @@ class ChatApiServiceTests(SimpleTestCase):
         self.assertNotIn("planner", chat.prompts)
         self.assertEqual(chat.planner_prompt, "Plan arithmetic progression.")
         self.assertEqual(chat.topic_name, "Arithmetic")
+        self.assertEqual(chat.course_state["overall_progress"], 0)
+        self.assertEqual(len(chat.course_state["expectations"]), 2)
 
     @override_settings(
         AI_CHAT_MODEL="shared-model",
@@ -279,6 +307,7 @@ class ChatApiServiceTests(SimpleTestCase):
                     planner_prompt="Plan writing progression.",
                     briefer_prompt="Condense writing sessions.",
                     name="Writing",
+                    expectations=["Write simple sentences.", "Revise sentences for clarity."],
                 ),
             )
 
@@ -292,3 +321,4 @@ class ChatApiServiceTests(SimpleTestCase):
         self.assertNotIn("temperature", chat.briefer_agent["request_defaults"])
         self.assertNotIn("planner", chat.prompts)
         self.assertEqual(chat.planner_prompt, "Plan writing progression.")
+        self.assertEqual(chat.course_state["overall_progress"], 0)

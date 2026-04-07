@@ -6,7 +6,7 @@ The repository currently contains:
 
 - A reusable `ai_chat.Agent` base class with an OpenAI-style request contract.
 - An `OpenAIAgent` adapter backed by the OpenAI Chat Completions API.
-- A persisted `Chat` orchestration class that routes user messages, stores all turns, and compacts long-running context.
+- A persisted `Chat` orchestration class that routes user messages, tracks per-session course progress, stores all turns, and compacts long-running context.
 - A `chat_api` app with Django-authenticated token issuance, course-topic management, and session-based chat endpoints.
 - A `core` app with a browser chat console at `/` and a course-topic management page at `/course-topics/`.
 - Admin support for chat sessions, turns, contexts, API tokens, and course topics.
@@ -47,6 +47,7 @@ Supported settings:
 - `AI_CHAT_MODEL`
 - `AI_CHAT_CATEGORIZER_MODEL`
 - `AI_CHAT_ANSWERER_MODEL`
+- `AI_CHAT_PLANNER_MODEL`
 - `AI_CHAT_BRIEFER_MODEL`
 - `AI_CHAT_LOG_LEVEL`
 
@@ -65,12 +66,12 @@ Core pieces:
 
 - `ai_chat.Agent`: provider-neutral base class. `ask()` is text-in/text-out, `create()` preserves an OpenAI-shaped payload.
 - `ai_chat.OpenAIAgent`: concrete provider adapter using the OpenAI SDK.
-- `ai_chat.Chat`: orchestrates categorization, answering, persistence, and context management.
+- `ai_chat.Chat`: orchestrates categorization, planner-driven course-state updates, answering, persistence, and context management.
 - `ai_chat.ChatPrompt`: prompt key/text pair accepted by `Chat`.
 
 Persistent storage:
 
-- `ChatSession`: logical user sessions, including the locked `course_topic` chosen at session creation time.
+- `ChatSession`: logical user sessions, including the locked `course_topic` chosen at session creation time and the persisted `course_state` snapshot for that learner.
 - `ChatTurn`: stored conversation turns with both user text and agent response.
 - `ChatContext`: mutable per-session context state, including the compacted summary for that chat session.
 
@@ -78,8 +79,9 @@ Each of these records includes `created_at` and `updated_at` timestamps.
 
 Prompt storage:
 
-- `chat_api.CourseTopic`: named prompt bundle containing `teacher`, `judge`, `categorizer`, `answerer`, and `briefer` prompts.
+- `chat_api.CourseTopic`: named bundle containing `teacher`, `judge`, `categorizer`, `answerer`, `planner`, and `briefer` prompts plus an ordered `expectations` list.
 - `ChatSession.course_topic`: frozen topic selection for that session so later retrieval cannot silently change prompt behavior.
+- `ChatSession.course_state`: session-local expectation scores, overall progress, current item, next item, and planner summary.
 
 ## How `Chat` Works
 
@@ -87,9 +89,10 @@ For each incoming user message:
 
 1. The chat loads the selected session's context from the database.
 2. A categorizer agent sees numbered short descriptions of the available prompts and returns the best prompt number.
-3. An answerer agent receives the selected prompt, the current context, and the latest user message.
-4. The user message and the agent response are both stored as a `ChatTurn`.
-5. If a briefer agent is configured and the context is too large, the chat can compact older context after responding.
+3. A planner agent updates the session's expectation scores, progress, current item, and next item using the stored topic expectations plus the latest turn context.
+4. An answerer agent receives the selected prompt, the current context, and the planner's internal course-state note.
+5. The user message and the agent response are both stored as a `ChatTurn`, and the updated `course_state` is persisted on the session.
+6. If a briefer agent is configured and the context is too large, the chat can compact older context after responding.
 
 Each session keeps its own isolated history and compacted context.
 The `start_session` flag starts a fresh session for the current `Chat` instance.
@@ -147,13 +150,13 @@ Available routes:
 - `POST /api/chat/login/`: Django login with JSON credentials, returns the user's API token.
 - `POST /api/chat/token/`: returns the current logged-in user's API token.
 - `GET /api/chat/course-topics/`: lists available course topics.
-- `POST /api/chat/course-topics/`: creates a new course topic with the five stored prompts.
-- `POST /api/chat/sessions/`: creates a new chat session for the token owner and requires `course_topic_id`.
-- `GET /api/chat/sessions/<session_id>/`: returns session metadata, including the stored topic.
-- `POST /api/chat/chat/`: accepts `session_id` and `text`, checks that the session belongs to the token owner, and returns the chat response.
+- `POST /api/chat/course-topics/`: creates a new course topic with six prompts and an `expectations` list.
+- `POST /api/chat/sessions/`: creates a new chat session for the token owner, requires `course_topic_id`, and initializes the session `course_state`.
+- `GET /api/chat/sessions/<session_id>/`: returns session metadata, including the stored topic and current `course_state`.
+- `POST /api/chat/chat/`: accepts `session_id` and `text`, checks that the session belongs to the token owner, and returns the chat response plus the updated `course_state`.
 
 New sessions always use the selected `CourseTopic`, and that topic stays fixed for the life of the session.
-The seeded default topic is `Elementary Math`.
+The seeded default topic is `Elementary Math`, including an expectation list that the planner can score from `0` to `4` per item.
 
 Example flow:
 
@@ -181,17 +184,28 @@ curl http://127.0.0.1:8000/api/chat/sessions/1/ \
 
 Course topic creation example:
 
+The payload below is a concrete `Elementary Math` example you can insert through the API or use as the equivalent data for the `chat_api_coursetopic` table:
+
 ```bash
 curl -X POST http://127.0.0.1:8000/api/chat/course-topics/ \
   -H "Authorization: Token <token>" \
   -H "Content-Type: application/json" \
   -d '{
-    "name":"Physics Intro",
-    "teacher_prompt":"Teach one physics idea at a time in simple language.",
-    "judge_prompt":"Judge the student answer and explain mistakes simply.",
-    "categorizer_prompt":"Return only the prompt number for the best next reply.",
-    "answerer_prompt":"Answer clearly and stay inside the selected prompt.",
-    "briefer_prompt":"Condense the session and keep important learning state."
+    "name":"Elementary Math",
+    "teacher_prompt":"You are a patient elementary math teacher. Teach one small idea at a time in simple language, use short worked examples, and end most teaching turns with a quick check for understanding.",
+    "judge_prompt":"You are checking a student'\''s elementary math answer. Say whether it is correct, explain the reasoning simply, and point out the next correction or reinforcement step.",
+    "categorizer_prompt":"Choose the best prompt number for the next elementary math tutoring reply. Use the judge prompt when the student is attempting an answer. Use the teacher prompt when the student needs explanation, a worked example, or more practice. Return only the number.",
+    "answerer_prompt":"You are an elementary math tutor. Follow the selected prompt exactly, stay inside the current course topic, and keep the language concise, clear, and age-appropriate.",
+    "planner_prompt":"You are the internal course planner for elementary math. Update the student'\''s expectation scores, estimate progress through the expectation list, and recommend the best current item and next item without leaving the topic.",
+    "briefer_prompt":"Condense the elementary math tutoring session. Keep the concepts covered, the student'\''s mistakes, evidence that affects expectation scores, and the next teaching step.",
+    "expectations":[
+      "Count forward and backward within 20.",
+      "Add within 20 using objects, drawings, or equations.",
+      "Subtract within 20 using objects, drawings, or equations.",
+      "Recall addition and subtraction facts within 10 with fluency.",
+      "Solve one-step word problems within 20 using addition or subtraction.",
+      "Understand two-digit numbers as tens and ones."
+    ]
   }'
 ```
 

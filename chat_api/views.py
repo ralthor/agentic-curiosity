@@ -11,6 +11,7 @@ from django.views.decorators.http import require_GET, require_http_methods, requ
 from ai_chat.models import ChatSession
 
 from .auth import get_user_from_authorization_header
+from .course_state import normalize_course_state, normalize_expectations, require_expectations
 from .models import ApiToken, CourseTopic
 from .services import build_chat, create_session, get_session
 
@@ -65,6 +66,7 @@ def _serialize_course_topic(course_topic: CourseTopic) -> dict:
         "answerer_prompt": course_topic.answerer_prompt,
         "planner_prompt": course_topic.planner_prompt,
         "briefer_prompt": course_topic.briefer_prompt,
+        "expectations": normalize_expectations(course_topic.expectations),
         "created_at": course_topic.created_at.isoformat(),
         "updated_at": course_topic.updated_at.isoformat(),
     }
@@ -82,6 +84,10 @@ def _serialize_session(session) -> dict:
     return {
         "session_id": session.pk,
         "course_topic": serialized_topic,
+        "course_state": normalize_course_state(
+            session.course_state,
+            expectations=course_topic.expectations if course_topic is not None else None,
+        ),
         "created_at": session.created_at.isoformat(),
         "updated_at": session.updated_at.isoformat(),
     }
@@ -92,6 +98,10 @@ def _require_non_blank_string(payload: dict, field_name: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{field_name} must not be blank.")
     return value.strip()
+
+
+def _require_expectation_list(payload: dict) -> list[str]:
+    return require_expectations(payload.get("expectations"))
 
 
 @csrf_exempt
@@ -183,6 +193,7 @@ def course_topics_view(request):
             answerer_prompt=_require_non_blank_string(payload, "answerer_prompt"),
             planner_prompt=_require_non_blank_string(payload, "planner_prompt"),
             briefer_prompt=_require_non_blank_string(payload, "briefer_prompt"),
+            expectations=_require_expectation_list(payload),
         )
     except ValueError as exc:
         return _json_error(str(exc), status=400)
@@ -236,7 +247,7 @@ def chat_view(request):
         return _json_error("Session does not have a course topic.", status=409)
 
     try:
-        chat = build_chat(user=user, session_id=session_id, course_topic=session.course_topic)
+        chat = build_chat(user=user, session_id=session_id, session=session, course_topic=session.course_topic)
     except ValueError as exc:
         return _json_error(str(exc), status=400)
     response = chat.reply(text)
@@ -244,5 +255,6 @@ def chat_view(request):
         {
             "session_id": session_id,
             "response": response,
+            "course_state": chat.course_state,
         }
     )

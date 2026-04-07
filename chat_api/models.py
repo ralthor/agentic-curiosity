@@ -18,6 +18,7 @@ class CourseTopic(models.Model):
     answerer_prompt = models.TextField()
     planner_prompt = models.TextField()
     briefer_prompt = models.TextField()
+    expectations = models.JSONField(default=list, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
