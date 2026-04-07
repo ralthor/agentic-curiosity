@@ -1,13 +1,15 @@
 import json
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase, override_settings
 
 from ai_chat import Agent, Chat, ChatPrompt
 from ai_chat.models import ChatContext, ChatSession, ChatTurn
 
 from .models import ApiToken
+from .services import build_chat
 
 
 class RecordingAgent(Agent):
@@ -136,3 +138,43 @@ class ChatApiTests(TestCase):
         self.assertEqual(turn.prompt_key, "judge")
         self.assertEqual(turn.user_text, "2 + 2 = 4")
         self.assertEqual(turn.agent_response, "Correct. 2 + 2 = 4. Did you understand?")
+
+
+class ChatApiServiceTests(SimpleTestCase):
+    @override_settings(
+        AI_CHAT_MODEL=None,
+        AI_CHAT_CATEGORIZER_MODEL=None,
+        AI_CHAT_ANSWERER_MODEL=None,
+        AI_CHAT_BRIEFER_MODEL=None,
+    )
+    def test_build_chat_uses_separate_default_models_per_agent(self):
+        with patch("chat_api.services.OpenAIAgent") as openai_agent_class:
+            openai_agent_class.side_effect = lambda **kwargs: kwargs
+
+            chat = build_chat(user=SimpleNamespace(pk=7), session_id=12)
+
+        self.assertEqual(chat.categorizer_agent["request_defaults"]["model"], "gpt-5-mini")
+        self.assertEqual(chat.answerer_agent["request_defaults"]["model"], "gpt-5.4-mini")
+        self.assertEqual(chat.briefer_agent["request_defaults"]["model"], "gpt-5-mini")
+        self.assertNotIn("temperature", chat.categorizer_agent["request_defaults"])
+        self.assertNotIn("temperature", chat.answerer_agent["request_defaults"])
+        self.assertNotIn("temperature", chat.briefer_agent["request_defaults"])
+
+    @override_settings(
+        AI_CHAT_MODEL="shared-model",
+        AI_CHAT_CATEGORIZER_MODEL="categorizer-model",
+        AI_CHAT_ANSWERER_MODEL=None,
+        AI_CHAT_BRIEFER_MODEL="briefer-model",
+    )
+    def test_build_chat_prefers_specific_model_settings_and_falls_back_to_shared_model(self):
+        with patch("chat_api.services.OpenAIAgent") as openai_agent_class:
+            openai_agent_class.side_effect = lambda **kwargs: kwargs
+
+            chat = build_chat(user=SimpleNamespace(pk=7), session_id=12)
+
+        self.assertEqual(chat.categorizer_agent["request_defaults"]["model"], "categorizer-model")
+        self.assertEqual(chat.answerer_agent["request_defaults"]["model"], "shared-model")
+        self.assertEqual(chat.briefer_agent["request_defaults"]["model"], "briefer-model")
+        self.assertNotIn("temperature", chat.categorizer_agent["request_defaults"])
+        self.assertNotIn("temperature", chat.answerer_agent["request_defaults"])
+        self.assertNotIn("temperature", chat.briefer_agent["request_defaults"])

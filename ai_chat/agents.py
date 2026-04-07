@@ -12,23 +12,27 @@ ChatMessage = Mapping[str, Any]
 class Agent(ABC):
     """Provider-agnostic chat agent with an OpenAI-style request contract."""
 
-    _reserved_request_defaults = {"messages", "model"}
+    _reserved_request_defaults = {"messages"}
 
     def __init__(
         self,
         *,
         model: str | None = None,
         system: str | None = None,
-        **request_defaults: Any,
+        request_defaults: Mapping[str, Any] | None = None,
+        **request_default_overrides: Any,
     ) -> None:
-        reserved_keys = self._reserved_request_defaults.intersection(request_defaults)
+        merged_request_defaults = dict(request_defaults or {})
+        merged_request_defaults.update(request_default_overrides)
+
+        reserved_keys = self._reserved_request_defaults.intersection(merged_request_defaults)
         if reserved_keys:
             reserved_list = ", ".join(sorted(reserved_keys))
             raise ValueError(f"Reserved request defaults cannot be provided: {reserved_list}.")
 
-        self.model = model
-        self.system = system
-        self.request_defaults = dict(request_defaults)
+        self.model = model if model is not None else merged_request_defaults.pop("model", None)
+        self.system = system if system is not None else merged_request_defaults.pop("system", None)
+        self.request_defaults = merged_request_defaults
 
     def ask(
         self,

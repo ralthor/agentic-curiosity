@@ -40,6 +40,9 @@ Supported settings:
 - `OPENAI_PROJECT`
 - `OPENAI_BASE_URL`
 - `AI_CHAT_MODEL`
+- `AI_CHAT_CATEGORIZER_MODEL`
+- `AI_CHAT_ANSWERER_MODEL`
+- `AI_CHAT_BRIEFER_MODEL`
 
 Minimal `.env` example:
 

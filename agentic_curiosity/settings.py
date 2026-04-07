@@ -37,7 +37,10 @@ OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
 OPENAI_ORGANIZATION = os.environ.get('OPENAI_ORGANIZATION')
 OPENAI_PROJECT = os.environ.get('OPENAI_PROJECT')
 OPENAI_BASE_URL = os.environ.get('OPENAI_BASE_URL')
-AI_CHAT_MODEL = os.environ.get('AI_CHAT_MODEL', 'gpt-4.1-mini')
+AI_CHAT_MODEL = os.environ.get('AI_CHAT_MODEL')
+AI_CHAT_CATEGORIZER_MODEL = os.environ.get('AI_CHAT_CATEGORIZER_MODEL')
+AI_CHAT_ANSWERER_MODEL = os.environ.get('AI_CHAT_ANSWERER_MODEL')
+AI_CHAT_BRIEFER_MODEL = os.environ.get('AI_CHAT_BRIEFER_MODEL')
 
 
 # Application definition

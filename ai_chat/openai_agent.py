@@ -56,9 +56,15 @@ class OpenAIAgent(Agent):
         http_client: Any = None,
         model: str | None = None,
         system: str | None = None,
-        **request_defaults: Any,
+        request_defaults: Mapping[str, Any] | None = None,
+        **request_default_overrides: Any,
     ) -> None:
-        super().__init__(model=model, system=system, **request_defaults)
+        super().__init__(
+            model=model,
+            system=system,
+            request_defaults=request_defaults,
+            **request_default_overrides,
+        )
         resolved_api_key = _normalize_optional_value(
             api_key if api_key is not None else _get_django_setting('OPENAI_API_KEY')
         )

@@ -58,6 +58,7 @@ class Chat:
         with transaction.atomic():
             session = ChatSession.objects.create(user_id=str(user_id))
             ChatContext.objects.create(session=session)
+        logger.info("Created chat session %s for user %s.", session.pk, user_id)
         return session
 
     def reply(self, text: str, *, start_session: bool = False) -> str:
@@ -71,9 +72,23 @@ class Chat:
         if not self.prompts:
             raise ValueError("At least one prompt is required to send a reply.")
 
+        logger.info(
+            "Processing chat reply for user %s session %s start_session=%s text_length=%s.",
+            self.user_id,
+            self.session_id,
+            start_session,
+            len(cleaned_text),
+        )
         session = self._ensure_session(start_session=start_session)
         context = self._ensure_context(session)
         turns = self._get_context_turns(context)
+        logger.debug(
+            "Loaded chat context for user %s session %s with %s turn(s) and summary_length=%s.",
+            self.user_id,
+            session.pk,
+            len(turns),
+            len(context.summary),
+        )
         prompt_key = self._categorize_prompt_key(cleaned_text, context, turns)
         response = self._generate_response(
             prompt_key=prompt_key,
@@ -84,7 +99,7 @@ class Chat:
 
         with transaction.atomic():
             session = ChatSession.objects.select_for_update().get(pk=session.pk, user_id=self.user_id)
-            ChatTurn.objects.create(
+            turn = ChatTurn.objects.create(
                 session=session,
                 prompt_key=prompt_key,
                 user_text=cleaned_text,
@@ -93,6 +108,14 @@ class Chat:
             now = timezone.now()
             ChatSession.objects.filter(pk=session.pk).update(updated_at=now)
             ChatContext.objects.filter(session=session).update(updated_at=now)
+        logger.info(
+            "Stored chat turn %s for user %s session %s prompt=%s response_length=%s.",
+            turn.pk,
+            self.user_id,
+            session.pk,
+            prompt_key,
+            len(response),
+        )
 
         if self.briefer_agent is not None:
             try:
@@ -106,6 +129,7 @@ class Chat:
         if self.briefer_agent is None:
             raise ValueError("briefer_agent is required to compact context.")
         if self.session_id is None:
+            logger.debug("Skipping chat context compaction for user %s because no session is selected.", self.user_id)
             return False
 
         context = (
@@ -114,6 +138,11 @@ class Chat:
             .first()
         )
         if context is None:
+            logger.warning(
+                "Skipping chat context compaction because session %s does not exist for user %s.",
+                self.session_id,
+                self.user_id,
+            )
             return False
 
         return self._manage_context(context, force=force)
@@ -128,6 +157,7 @@ class Chat:
     ) -> int:
         compacted_count = 0
         contexts = ChatContext.objects.select_related("session").order_by("session__user_id", "session_id")
+        logger.info("Scanning %s stored chat context(s) for compaction.", contexts.count())
 
         for context in contexts:
             chat = cls(
@@ -140,6 +170,7 @@ class Chat:
             if chat._manage_context(context, force=False):
                 compacted_count += 1
 
+        logger.info("Compacted %s stored chat context(s) in batch mode.", compacted_count)
         return compacted_count
 
     def _ensure_session(self, *, start_session: bool) -> ChatSession:
@@ -147,12 +178,21 @@ class Chat:
             if start_session or self.session_id is None:
                 session = self.create_session(user_id=self.user_id)
                 self.session_id = session.pk
+                logger.info(
+                    "Started new chat session %s for user %s start_session=%s.",
+                    session.pk,
+                    self.user_id,
+                    start_session,
+                )
                 return session
 
-            return ChatSession.objects.select_for_update().get(pk=self.session_id, user_id=self.user_id)
+            session = ChatSession.objects.select_for_update().get(pk=self.session_id, user_id=self.user_id)
+            logger.debug("Using existing chat session %s for user %s.", session.pk, self.user_id)
+            return session
 
     def _ensure_context(self, session: ChatSession) -> ChatContext:
         context, _ = ChatContext.objects.get_or_create(session=session)
+        logger.debug("Ensured chat context for user %s session %s.", self.user_id, session.pk)
         return context
 
     def _get_context_turns(self, context: ChatContext) -> list[ChatTurn]:
@@ -175,7 +215,15 @@ class Chat:
             f"Latest user message:\n{user_text}"
         )
         raw_selection = self.categorizer_agent.ask(categorizer_prompt, user=self.user_id)
-        return self._parse_prompt_key(raw_selection)
+        prompt_key = self._parse_prompt_key(raw_selection)
+        logger.info(
+            "Selected prompt %s for user %s session %s from categorizer output %r.",
+            prompt_key,
+            self.user_id,
+            context.session_id,
+            raw_selection,
+        )
+        return prompt_key
 
     def _generate_response(
         self,
@@ -197,12 +245,33 @@ class Chat:
         turns = self._get_context_turns(context)
         current_size = self._context_size_bytes(context, turns)
         if not force and current_size <= self.context_threshold_bytes:
+            logger.debug(
+                "Skipping compaction for user %s session %s current_size=%s threshold=%s.",
+                self.user_id,
+                context.session_id,
+                current_size,
+                self.context_threshold_bytes,
+            )
             return False
 
         turns_to_brief = list(turns[:-self.recent_turns_to_keep]) if len(turns) > self.recent_turns_to_keep else []
         if not context.summary.strip() and not turns_to_brief:
+            logger.debug(
+                "Skipping compaction for user %s session %s because there is nothing to condense.",
+                self.user_id,
+                context.session_id,
+            )
             return False
 
+        logger.info(
+            "Compacting chat context for user %s session %s force=%s current_size=%s total_turns=%s turns_to_brief=%s.",
+            self.user_id,
+            context.session_id,
+            force,
+            current_size,
+            len(turns),
+            len(turns_to_brief),
+        )
         briefer_prompt = (
             "Condense the stored conversation context for future replies.\n"
             "Keep important user facts, preferences, constraints, decisions, open threads, and unresolved tasks.\n"
@@ -221,6 +290,13 @@ class Chat:
             compacted_through_turn=compacted_through_turn,
             last_compacted_at=timezone.now(),
             updated_at=timezone.now(),
+        )
+        logger.info(
+            "Compacted chat context for user %s session %s summary_length=%s compacted_through_turn_id=%s.",
+            self.user_id,
+            context.session_id,
+            len(condensed_context),
+            getattr(compacted_through_turn, "id", None),
         )
         return True
 

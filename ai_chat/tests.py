@@ -112,6 +112,31 @@ class AgentTests(SimpleTestCase):
         with self.assertRaises(AgentResponseError):
             agent.ask("Hi")
 
+    def test_init_accepts_model_and_system_inside_request_defaults(self):
+        agent = DummyAgent(
+            {"choices": [{"message": {"content": "pong"}}]},
+            request_defaults={
+                "model": "defaults-model",
+                "system": "Defaults system prompt.",
+                "temperature": 0.6,
+            },
+        )
+
+        answer = agent.ask("Ping?")
+
+        self.assertEqual(answer, "pong")
+        self.assertEqual(agent.model, "defaults-model")
+        self.assertEqual(agent.system, "Defaults system prompt.")
+        self.assertEqual(
+            agent.last_payload["messages"],
+            [
+                {"role": "system", "content": "Defaults system prompt."},
+                {"role": "user", "content": "Ping?"},
+            ],
+        )
+        self.assertEqual(agent.last_payload["model"], "defaults-model")
+        self.assertEqual(agent.last_payload["temperature"], 0.6)
+
 
 class OpenAIAgentTests(SimpleTestCase):
     def test_openai_agent_forwards_payload_to_sdk_client(self):
@@ -212,6 +237,18 @@ class ChatTests(TestCase):
         self.assertIn("Selected prompt (support):", answerer_payload["messages"][1]["content"])
         self.assertEqual(answerer_payload["messages"][-1], {"role": "user", "content": "I need support"})
 
+    def test_reply_logs_session_prompt_and_turn_details(self):
+        chat = self.build_chat()
+
+        with self.assertLogs("ai_chat.chat", level="INFO") as captured:
+            chat.reply("I need support", start_session=True)
+
+        joined_logs = "\n".join(captured.output)
+        self.assertIn("Processing chat reply for user user-1", joined_logs)
+        self.assertIn("Started new chat session", joined_logs)
+        self.assertIn("Selected prompt support", joined_logs)
+        self.assertIn("Stored chat turn", joined_logs)
+
     def test_reply_maps_numbered_prompt_selection_to_key(self):
         categorizer = RecordingAgent(model="categorizer", response_text="2")
         answerer = RecordingAgent(model="answerer", response_text="Sales answer.")
@@ -294,6 +331,23 @@ class ChatTests(TestCase):
         self.assertEqual(len(remaining_turns), 10)
         self.assertEqual(remaining_turns[0].user_text, "user turn 2")
         self.assertIn("Turns to condense:", briefer.payloads[-1]["messages"][-1]["content"])
+
+    def test_compact_context_logs_decision_and_result(self):
+        chat = self.build_chat(
+            briefer_agent=RecordingAgent(model="briefer", response_text="Condensed summary"),
+            context_threshold_bytes=100_000,
+            recent_turns_to_keep=1,
+        )
+        for index in range(3):
+            chat.reply(f"user turn {index}", start_session=index == 0)
+
+        with self.assertLogs("ai_chat.chat", level="INFO") as captured:
+            compacted = chat.compact_context(force=True)
+
+        self.assertTrue(compacted)
+        joined_logs = "\n".join(captured.output)
+        self.assertIn("Compacting chat context for user user-1 session", joined_logs)
+        self.assertIn("Compacted chat context for user user-1 session", joined_logs)
 
     def test_reply_does_not_fail_when_auto_compaction_raises(self):
         def raise_on_brief(_payload):
