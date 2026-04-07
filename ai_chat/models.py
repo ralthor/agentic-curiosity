@@ -30,13 +30,10 @@ class ChatTurn(models.Model):
 
 
 class ChatContext(models.Model):
-    user_id = models.CharField(max_length=255, unique=True)
-    current_session = models.ForeignKey(
+    session = models.OneToOneField(
         ChatSession,
-        null=True,
-        blank=True,
-        on_delete=models.SET_NULL,
-        related_name="+",
+        on_delete=models.CASCADE,
+        related_name="context",
     )
     compacted_through_turn = models.ForeignKey(
         ChatTurn,
@@ -50,7 +47,7 @@ class ChatContext(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ("user_id",)
+        ordering = ("session_id",)
 
     def __str__(self) -> str:
-        return f"ChatContext(user_id={self.user_id!r})"
+        return f"ChatContext(session_id={self.session_id})"

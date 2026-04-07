@@ -15,6 +15,7 @@ Read `references/project-map.md` before making non-trivial changes. It contains 
 - Before considering a feature complete, run the relevant new tests and the pre-existing test suite to confirm the change did not break current behavior.
 - Treat `ai_chat` as a reusable Python utility app, not a web app. Keep provider-neutral behavior in `ai_chat/agents.py` and each concrete provider in its own module such as `ai_chat/openai_agent.py`.
 - Preserve the current split in the chat API: `Agent.ask()` is the text-in/text-out helper, while `Agent.create()` preserves the OpenAI-style request shape for cross-provider compatibility.
+- Keep persisted chat orchestration and prompt routing in `ai_chat/chat.py`. The categorizer currently sees numbered short prompt descriptions and should return only the selected prompt number.
 - Re-export public agent classes from `ai_chat/__init__.py` if other modules should import them directly from `ai_chat`.
 - Update tests whenever public `ai_chat` behavior changes.
 - Register new Django apps in `agentic_curiosity/settings.py`, and only wire URLs when the app actually serves HTTP routes.
@@ -24,11 +25,12 @@ Read `references/project-map.md` before making non-trivial changes. It contains 
 ### Change AI Chat Behavior
 
 1. Read `references/project-map.md` and confirm whether the change belongs in shared logic or a provider-specific adapter.
-2. Change `ai_chat/agents.py` only for provider-agnostic behavior shared by multiple adapters.
-3. Keep provider-specific SDK calls in their own file.
-4. Add or update tests in `ai_chat/tests.py` for the new behavior.
-5. If you change exports or public behavior, update `ai_chat/__init__.py`.
-6. Verify with the focused tests, then run the broader suite with `uv run python manage.py test` and `uv run python manage.py check`.
+2. Change `ai_chat/chat.py` for persisted chat orchestration, prompt routing, or context-compaction behavior.
+3. Change `ai_chat/agents.py` only for provider-agnostic behavior shared by multiple adapters.
+4. Keep provider-specific SDK calls in their own file.
+5. Add or update tests in `ai_chat/tests.py` for the new behavior.
+6. If you change exports or public behavior, update `ai_chat/__init__.py`.
+7. Verify with the focused tests, then run the broader suite with `uv run python manage.py test` and `uv run python manage.py check`.
 
 ### Add A New AI Provider
 

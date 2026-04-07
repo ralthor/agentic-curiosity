@@ -37,6 +37,7 @@ OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
 OPENAI_ORGANIZATION = os.environ.get('OPENAI_ORGANIZATION')
 OPENAI_PROJECT = os.environ.get('OPENAI_PROJECT')
 OPENAI_BASE_URL = os.environ.get('OPENAI_BASE_URL')
+AI_CHAT_MODEL = os.environ.get('AI_CHAT_MODEL', 'gpt-4.1-mini')
 
 
 # Application definition
@@ -50,6 +51,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'core.apps.CoreConfig',
     'ai_chat.apps.AiChatConfig',
+    'chat_api.apps.ChatApiConfig',
 ]
 
 MIDDLEWARE = [

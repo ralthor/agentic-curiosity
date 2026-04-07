@@ -31,6 +31,7 @@ class Chat:
         self,
         *,
         user_id: str | int,
+        session_id: int | None = None,
         prompts: PromptCollection | None = None,
         categorizer_agent: Agent | None = None,
         answerer_agent: Agent | None = None,
@@ -44,12 +45,20 @@ class Chat:
             raise ValueError("recent_turns_to_keep must be greater than zero.")
 
         self.user_id = str(user_id)
+        self.session_id = session_id
         self.prompts = self._normalize_prompts(prompts or {})
         self.categorizer_agent = categorizer_agent
         self.answerer_agent = answerer_agent
         self.briefer_agent = briefer_agent
         self.context_threshold_bytes = context_threshold_bytes
         self.recent_turns_to_keep = recent_turns_to_keep
+
+    @classmethod
+    def create_session(cls, *, user_id: str | int) -> ChatSession:
+        with transaction.atomic():
+            session = ChatSession.objects.create(user_id=str(user_id))
+            ChatContext.objects.create(session=session)
+        return session
 
     def reply(self, text: str, *, start_session: bool = False) -> str:
         cleaned_text = text.strip()
@@ -62,7 +71,8 @@ class Chat:
         if not self.prompts:
             raise ValueError("At least one prompt is required to send a reply.")
 
-        context = self._ensure_context(start_session=start_session)
+        session = self._ensure_session(start_session=start_session)
+        context = self._ensure_context(session)
         turns = self._get_context_turns(context)
         prompt_key = self._categorize_prompt_key(cleaned_text, context, turns)
         response = self._generate_response(
@@ -73,35 +83,34 @@ class Chat:
         )
 
         with transaction.atomic():
-            context = ChatContext.objects.select_related("current_session").get(pk=context.pk)
-            update_fields = ["updated_at"]
-            if context.current_session is None:
-                context.current_session = ChatSession.objects.create(user_id=self.user_id)
-                update_fields.append("current_session")
-
+            session = ChatSession.objects.select_for_update().get(pk=session.pk, user_id=self.user_id)
             ChatTurn.objects.create(
-                session=context.current_session,
+                session=session,
                 prompt_key=prompt_key,
                 user_text=cleaned_text,
                 agent_response=response,
             )
-            context.save(update_fields=update_fields)
+            now = timezone.now()
+            ChatSession.objects.filter(pk=session.pk).update(updated_at=now)
+            ChatContext.objects.filter(session=session).update(updated_at=now)
 
         if self.briefer_agent is not None:
             try:
                 self.compact_context(force=False)
             except Exception:
-                logger.exception("Automatic context compaction failed for user %s.", self.user_id)
+                logger.exception("Automatic context compaction failed for session %s.", self.session_id)
 
         return response
 
     def compact_context(self, *, force: bool = False) -> bool:
         if self.briefer_agent is None:
             raise ValueError("briefer_agent is required to compact context.")
+        if self.session_id is None:
+            return False
 
         context = (
-            ChatContext.objects.select_related("current_session", "compacted_through_turn")
-            .filter(user_id=self.user_id)
+            ChatContext.objects.select_related("session", "compacted_through_turn")
+            .filter(session_id=self.session_id, session__user_id=self.user_id)
             .first()
         )
         if context is None:
@@ -118,42 +127,50 @@ class Chat:
         recent_turns_to_keep: int = 10,
     ) -> int:
         compacted_count = 0
-        user_ids = ChatContext.objects.order_by("user_id").values_list("user_id", flat=True)
+        contexts = ChatContext.objects.select_related("session").order_by("session__user_id", "session_id")
 
-        for user_id in user_ids:
+        for context in contexts:
             chat = cls(
-                user_id=user_id,
+                user_id=context.session.user_id,
+                session_id=context.session_id,
                 briefer_agent=briefer_agent,
                 context_threshold_bytes=context_threshold_bytes,
                 recent_turns_to_keep=recent_turns_to_keep,
             )
-            if chat.compact_context(force=False):
+            if chat._manage_context(context, force=False):
                 compacted_count += 1
 
         return compacted_count
 
-    def _ensure_context(self, *, start_session: bool) -> ChatContext:
+    def _ensure_session(self, *, start_session: bool) -> ChatSession:
         with transaction.atomic():
-            context, _ = ChatContext.objects.select_for_update().get_or_create(user_id=self.user_id)
-            if start_session or context.current_session_id is None:
-                context.current_session = ChatSession.objects.create(user_id=self.user_id)
-                context.save(update_fields=["current_session", "updated_at"])
+            if start_session or self.session_id is None:
+                session = self.create_session(user_id=self.user_id)
+                self.session_id = session.pk
+                return session
 
+            return ChatSession.objects.select_for_update().get(pk=self.session_id, user_id=self.user_id)
+
+    def _ensure_context(self, session: ChatSession) -> ChatContext:
+        context, _ = ChatContext.objects.get_or_create(session=session)
         return context
 
     def _get_context_turns(self, context: ChatContext) -> list[ChatTurn]:
-        turns = ChatTurn.objects.filter(session__user_id=self.user_id).select_related("session")
+        turns = ChatTurn.objects.filter(session=context.session).select_related("session")
         if context.compacted_through_turn_id is not None:
             turns = turns.filter(id__gt=context.compacted_through_turn_id)
         return list(turns.order_by("created_at", "id"))
 
     def _categorize_prompt_key(self, user_text: str, context: ChatContext, turns: Sequence[ChatTurn]) -> str:
-        prompt_options = "\n".join(f"- {key}" for key in self.prompts)
+        prompt_options = "\n".join(
+            f"{index}. {self._describe_prompt_for_categorizer(prompt_text)}"
+            for index, prompt_text in enumerate(self.prompts.values(), start=1)
+        )
         context_text = self._render_context_for_text(context, turns)
         categorizer_prompt = (
-            "Choose the single best prompt key for the next reply.\n"
-            "Return only the exact key name and nothing else.\n\n"
-            f"Available prompt keys:\n{prompt_options}\n\n"
+            "Choose the single best prompt for the next reply.\n"
+            "Return only the prompt number and nothing else.\n\n"
+            f"Available prompts:\n{prompt_options}\n\n"
             f"Current context:\n{context_text}\n\n"
             f"Latest user message:\n{user_text}"
         )
@@ -186,19 +203,13 @@ class Chat:
         if not context.summary.strip() and not turns_to_brief:
             return False
 
-        active_session_label = "None"
-        if context.current_session_id is not None:
-            active_session_label = str(context.current_session_id)
-
         briefer_prompt = (
             "Condense the stored conversation context for future replies.\n"
             "Keep important user facts, preferences, constraints, decisions, open threads, and unresolved tasks.\n"
             "Value recent details more than old details.\n"
-            "If any compacted turns belong to the active session, preserve enough detail to continue that session naturally.\n"
             "Return only the condensed context text.\n\n"
-            f"Active session id: {active_session_label}\n\n"
             f"Existing summary:\n{context.summary or '(none)'}\n\n"
-            f"Turns to condense:\n{self._render_turns_for_briefing(context, turns_to_brief)}"
+            f"Turns to condense:\n{self._render_turns_for_briefing(turns_to_brief)}"
         )
         condensed_context = self.briefer_agent.ask(briefer_prompt, user=self.user_id).strip()
         if not condensed_context:
@@ -227,14 +238,7 @@ class Chat:
                 }
             )
 
-        current_session_id = context.current_session_id
-        previous_session_id: int | None = None
         for turn in turns:
-            if turn.session_id != previous_session_id:
-                label = "Current active session." if turn.session_id == current_session_id else "Previous session."
-                messages.append({"role": "system", "content": label})
-                previous_session_id = turn.session_id
-
             messages.append({"role": "user", "content": turn.user_text})
             messages.append({"role": "assistant", "content": turn.agent_response})
 
@@ -255,23 +259,15 @@ class Chat:
         if context.summary.strip():
             lines.append(f"Summary:\n{context.summary.strip()}")
 
-        lines.append(self._render_turns_for_briefing(context, turns))
+        lines.append(self._render_turns_for_briefing(turns))
         return "\n\n".join(line for line in lines if line.strip())
 
-    def _render_turns_for_briefing(self, context: ChatContext, turns: Sequence[ChatTurn]) -> str:
+    def _render_turns_for_briefing(self, turns: Sequence[ChatTurn]) -> str:
         if not turns:
             return "(none)"
 
-        current_session_id = context.current_session_id
         parts: list[str] = []
-        previous_session_id: int | None = None
-
         for turn in turns:
-            if turn.session_id != previous_session_id:
-                label = "Current active session" if turn.session_id == current_session_id else "Previous session"
-                parts.append(f"{label} (session {turn.session_id})")
-                previous_session_id = turn.session_id
-
             parts.append(
                 "\n".join(
                     [
@@ -318,8 +314,28 @@ class Chat:
 
         return normalized
 
+    def _describe_prompt_for_categorizer(self, prompt_text: str) -> str:
+        normalized_text = " ".join(line.strip() for line in prompt_text.splitlines() if line.strip())
+        if not normalized_text:
+            return "(blank prompt)"
+        if len(normalized_text) <= 120:
+            return normalized_text
+
+        truncated = normalized_text[:117].rstrip()
+        if " " in truncated:
+            truncated = truncated.rsplit(" ", 1)[0]
+        return f"{truncated}..."
+
     def _parse_prompt_key(self, raw_selection: str) -> str:
         stripped = raw_selection.strip().strip("`").strip()
+        prompt_keys = list(self.prompts)
+
+        numeric_match = re.search(r"\b(\d+)\b", stripped)
+        if numeric_match:
+            prompt_index = int(numeric_match.group(1)) - 1
+            if 0 <= prompt_index < len(prompt_keys):
+                return prompt_keys[prompt_index]
+
         if stripped in self.prompts:
             return stripped
 

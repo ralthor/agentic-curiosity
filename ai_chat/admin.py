@@ -20,6 +20,6 @@ class ChatTurnAdmin(admin.ModelAdmin):
 
 @admin.register(ChatContext)
 class ChatContextAdmin(admin.ModelAdmin):
-    list_display = ("user_id", "current_session", "compacted_through_turn", "last_compacted_at", "updated_at")
-    search_fields = ("user_id", "summary")
-    ordering = ("user_id",)
+    list_display = ("session", "compacted_through_turn", "last_compacted_at", "updated_at")
+    search_fields = ("session__user_id", "summary")
+    ordering = ("session_id",)

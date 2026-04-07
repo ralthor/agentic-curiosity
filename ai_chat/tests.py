@@ -160,16 +160,18 @@ class ChatTests(TestCase):
         self,
         *,
         user_id="user-1",
+        session_id=None,
         categorizer_agent=None,
         answerer_agent=None,
         briefer_agent=None,
         context_threshold_bytes=5_120,
         recent_turns_to_keep=10,
     ):
-        categorizer = categorizer_agent or RecordingAgent(model="categorizer", response_text="support")
+        categorizer = categorizer_agent or RecordingAgent(model="categorizer", response_text="1")
         answerer = answerer_agent or RecordingAgent(model="answerer", response_text="agent reply")
         return Chat(
             user_id=user_id,
+            session_id=session_id,
             prompts=[ChatPrompt("support", "Help the user solve support issues.")],
             categorizer_agent=categorizer,
             answerer_agent=answerer,
@@ -178,45 +180,93 @@ class ChatTests(TestCase):
             recent_turns_to_keep=recent_turns_to_keep,
         )
 
+    def test_create_session_initializes_a_context(self):
+        session = Chat.create_session(user_id="user-1")
+
+        self.assertEqual(session.user_id, "user-1")
+        self.assertTrue(ChatContext.objects.filter(session=session).exists())
+
     def test_reply_selects_prompt_persists_turn_and_uses_context(self):
-        categorizer = RecordingAgent(model="categorizer", response_text="support", system="Pick a route.")
+        categorizer = RecordingAgent(model="categorizer", response_text="1", system="Pick a route.")
         answerer = RecordingAgent(model="answerer", response_text="Here is the answer.", system="Answer clearly.")
         chat = self.build_chat(categorizer_agent=categorizer, answerer_agent=answerer)
 
         reply = chat.reply("I need support", start_session=True)
 
         self.assertEqual(reply, "Here is the answer.")
-        context = ChatContext.objects.get(user_id="user-1")
         turn = ChatTurn.objects.get()
+        context = ChatContext.objects.get(session=turn.session)
         self.assertEqual(turn.prompt_key, "support")
         self.assertEqual(turn.user_text, "I need support")
         self.assertEqual(turn.agent_response, "Here is the answer.")
-        self.assertEqual(turn.session_id, context.current_session_id)
+        self.assertEqual(chat.session_id, turn.session_id)
+        self.assertEqual(context.session_id, turn.session_id)
 
         categorizer_payload = categorizer.payloads[-1]
         self.assertEqual(categorizer_payload["messages"][0]["content"], "Pick a route.")
-        self.assertIn("Available prompt keys:", categorizer_payload["messages"][1]["content"])
+        self.assertIn("Return only the prompt number and nothing else.", categorizer_payload["messages"][1]["content"])
+        self.assertIn("1. Help the user solve support issues.", categorizer_payload["messages"][1]["content"])
 
         answerer_payload = answerer.payloads[-1]
         self.assertEqual(answerer_payload["messages"][0]["content"], "Answer clearly.")
         self.assertIn("Selected prompt (support):", answerer_payload["messages"][1]["content"])
         self.assertEqual(answerer_payload["messages"][-1], {"role": "user", "content": "I need support"})
 
-    def test_start_session_rotates_the_active_session(self):
-        chat = self.build_chat()
+    def test_reply_maps_numbered_prompt_selection_to_key(self):
+        categorizer = RecordingAgent(model="categorizer", response_text="2")
+        answerer = RecordingAgent(model="answerer", response_text="Sales answer.")
+        chat = Chat(
+            user_id="user-2",
+            prompts=[
+                ChatPrompt("support", "Help the user solve support issues."),
+                ChatPrompt("sales", "Answer pre-sales and pricing questions."),
+            ],
+            categorizer_agent=categorizer,
+            answerer_agent=answerer,
+        )
+
+        reply = chat.reply("How much does the paid plan cost?", start_session=True)
+
+        self.assertEqual(reply, "Sales answer.")
+        self.assertEqual(ChatTurn.objects.get(session__user_id="user-2").prompt_key, "sales")
+        self.assertIn("Selected prompt (sales):", answerer.payloads[-1]["messages"][0]["content"])
+
+    def test_start_session_rotates_to_a_new_isolated_session(self):
+        answerer = RecordingAgent(model="answerer", response_text="agent reply")
+        chat = self.build_chat(answerer_agent=answerer)
 
         chat.reply("First question", start_session=True)
-        first_context = ChatContext.objects.get(user_id="user-1")
-        first_session_id = first_context.current_session_id
+        first_session_id = chat.session_id
+        first_payload = answerer.payloads[-1]["messages"]
+        self.assertEqual(first_payload[-1], {"role": "user", "content": "First question"})
 
         chat.reply("Second question", start_session=True)
 
-        refreshed_context = ChatContext.objects.get(user_id="user-1")
-        turns = list(ChatTurn.objects.order_by("id"))
+        second_payload = answerer.payloads[-1]["messages"]
         self.assertEqual(ChatSession.objects.filter(user_id="user-1").count(), 2)
-        self.assertNotEqual(refreshed_context.current_session_id, first_session_id)
-        self.assertEqual(turns[0].session_id, first_session_id)
-        self.assertEqual(turns[1].session_id, refreshed_context.current_session_id)
+        self.assertEqual(ChatContext.objects.count(), 2)
+        self.assertNotEqual(chat.session_id, first_session_id)
+        self.assertEqual(second_payload[-1], {"role": "user", "content": "Second question"})
+        self.assertNotIn({"role": "user", "content": "First question"}, second_payload)
+        self.assertNotIn({"role": "assistant", "content": "agent reply"}, second_payload[:-1])
+
+    def test_reply_reuses_only_the_selected_session_history(self):
+        answerer = RecordingAgent(model="answerer", response_text="agent reply")
+        chat = self.build_chat(answerer_agent=answerer)
+
+        chat.reply("Session one", start_session=True)
+        first_session_id = chat.session_id
+        chat.reply("Session one follow-up")
+
+        second_session = Chat.create_session(user_id="user-1")
+        another_chat = self.build_chat(session_id=second_session.pk, answerer_agent=answerer)
+        another_chat.reply("Session two question")
+
+        self.assertEqual(first_session_id, ChatTurn.objects.order_by("id").first().session_id)
+        second_payload = answerer.payloads[-1]["messages"]
+        self.assertEqual(second_payload[-1], {"role": "user", "content": "Session two question"})
+        self.assertNotIn({"role": "user", "content": "Session one"}, second_payload)
+        self.assertNotIn({"role": "user", "content": "Session one follow-up"}, second_payload)
 
     def test_compact_context_summarizes_older_turns_and_keeps_recent_turns(self):
         briefer = RecordingAgent(model="briefer", response_text="Condensed summary")
@@ -237,10 +287,8 @@ class ChatTests(TestCase):
         compacted = chat.compact_context(force=True)
 
         self.assertTrue(compacted)
-        context = ChatContext.objects.get(user_id="user-1")
-        remaining_turns = list(
-            ChatTurn.objects.filter(session__user_id="user-1", id__gt=context.compacted_through_turn_id).order_by("id")
-        )
+        context = ChatContext.objects.get(session_id=chat.session_id)
+        remaining_turns = list(ChatTurn.objects.filter(session_id=chat.session_id, id__gt=context.compacted_through_turn_id))
         self.assertEqual(context.summary, "Condensed summary")
         self.assertEqual(context.compacted_through_turn.user_text, "user turn 1")
         self.assertEqual(len(remaining_turns), 10)
@@ -262,7 +310,7 @@ class ChatTests(TestCase):
             reply = chat.reply("second message")
 
         self.assertEqual(reply, "agent reply")
-        self.assertEqual(ChatTurn.objects.filter(session__user_id="user-1").count(), 2)
+        self.assertEqual(ChatTurn.objects.filter(session_id=chat.session_id).count(), 2)
 
 
 class CompactChatContextsCommandTests(TestCase):
@@ -273,7 +321,7 @@ class CompactChatContextsCommandTests(TestCase):
         chat = Chat(
             user_id="command-user",
             prompts={"support": "Help with support."},
-            categorizer_agent=RecordingAgent(model="categorizer", response_text="support"),
+            categorizer_agent=RecordingAgent(model="categorizer", response_text="1"),
             answerer_agent=RecordingAgent(model="answerer", response_text="brief response"),
             context_threshold_bytes=100_000,
             recent_turns_to_keep=2,
@@ -295,7 +343,7 @@ class CompactChatContextsCommandTests(TestCase):
             stdout=stdout,
         )
 
-        context = ChatContext.objects.get(user_id="command-user")
+        context = ChatContext.objects.get(session_id=chat.session_id)
         self.assertEqual(context.summary, "Command summary")
         self.assertIn("Compacted 1 chat context(s).", stdout.getvalue())
         self.assertTrue(CommandBrieferAgent.payloads)

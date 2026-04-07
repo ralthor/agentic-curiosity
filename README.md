@@ -7,6 +7,7 @@ The repository currently contains:
 - A reusable `ai_chat.Agent` base class with an OpenAI-style request contract.
 - An `OpenAIAgent` adapter backed by the OpenAI Chat Completions API.
 - A persisted `Chat` orchestration class that routes user messages, stores all turns, and compacts long-running context.
+- A `chat_api` app with Django-authenticated token issuance plus session-based chat endpoints.
 - A small Django app shell with a health-style home route and admin support for chat records.
 
 ## Requirements
@@ -38,6 +39,7 @@ Supported settings:
 - `OPENAI_ORGANIZATION`
 - `OPENAI_PROJECT`
 - `OPENAI_BASE_URL`
+- `AI_CHAT_MODEL`
 
 Minimal `.env` example:
 
@@ -61,19 +63,22 @@ Persistent storage:
 
 - `ChatSession`: logical user sessions.
 - `ChatTurn`: immutable stored conversation turns with both user text and agent response.
-- `ChatContext`: mutable context state, including the active session and compacted summary.
+- `ChatContext`: mutable per-session context state, including the compacted summary for that chat session.
 
 ## How `Chat` Works
 
 For each incoming user message:
 
-1. The chat loads the user's current context from the database.
-2. A categorizer agent selects the best prompt key from the provided prompt set.
+1. The chat loads the selected session's context from the database.
+2. A categorizer agent sees numbered short descriptions of the available prompts and returns the best prompt number.
 3. An answerer agent receives the selected prompt, the current context, and the latest user message.
 4. The user message and the agent response are both stored as a `ChatTurn`.
 5. If a briefer agent is configured and the context is too large, the chat can compact older context after responding.
 
-The `start_session` flag starts a fresh active session without losing older stored conversation history.
+Each session keeps its own isolated history and compacted context.
+The `start_session` flag starts a fresh session for the current `Chat` instance.
+
+Prompt keys stay internal. The categorizer only sees short prompt descriptions derived from each prompt's text, and `Chat` maps the returned number back to the stored key.
 
 ## Example Usage
 
@@ -88,7 +93,7 @@ from ai_chat import Chat, OpenAIAgent
 
 categorizer = OpenAIAgent(
     model="gpt-4.1-mini",
-    system="Choose the best prompt key and return only that key.",
+    system="Choose the best prompt number and return only that number.",
 )
 
 answerer = OpenAIAgent(
@@ -114,6 +119,39 @@ chat = Chat(
 
 response = chat.reply("I need help resetting my account password.", start_session=True)
 print(response)
+print(chat.session_id)
+```
+
+## Chat API
+
+The project includes a token-authenticated chat API at `/api/chat/`.
+
+Available routes:
+
+- `POST /api/chat/login/`: Django login with JSON credentials, returns the user's API token.
+- `POST /api/chat/token/`: returns the current logged-in user's API token.
+- `POST /api/chat/sessions/`: creates a new chat session for the token owner and returns `session_id`.
+- `POST /api/chat/chat/`: accepts `session_id` and `text`, checks that the session belongs to the token owner, and returns the chat response.
+
+The default API prompts are:
+
+- `teacher`: teaches elementary math, introduces a topic when needed, and asks short check-for-understanding questions.
+- `judge`: checks whether the student's answer is correct, explains mistakes, and asks whether the user understood.
+
+Example flow:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/chat/login/ \
+  -H "Content-Type: application/json" \
+  -d '{"username":"alice","password":"wonderland"}'
+
+curl -X POST http://127.0.0.1:8000/api/chat/sessions/ \
+  -H "Authorization: Token <token>"
+
+curl -X POST http://127.0.0.1:8000/api/chat/chat/ \
+  -H "Authorization: Token <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"session_id":1,"text":"2 + 2 = 4"}'
 ```
 
 ## Context Compaction
@@ -157,6 +195,7 @@ uv run python manage.py runserver
 ```text
 agentic_curiosity/  Django project settings and root URLs
 ai_chat/            Reusable agent and persisted chat utilities
+chat_api/           Token-authenticated chat HTTP endpoints
 core/               Minimal web app with the home route
 manage.py           Django entry point
 ```
