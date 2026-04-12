@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 
 from django.contrib.auth import authenticate, login as django_login
-from django.db import IntegrityError
+from django.core.exceptions import ValidationError
+from django.db import IntegrityError, transaction
+from django.db.models import Count
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
@@ -11,9 +13,9 @@ from django.views.decorators.http import require_GET, require_http_methods, requ
 from ai_chat.models import ChatSession
 
 from .auth import get_user_from_authorization_header
-from .course_state import normalize_expectations, require_expectations, serialize_course_state
-from .models import ApiToken, CourseTopic
-from .services import build_chat, create_session, get_session
+from .models import ApiToken, Course, CourseQuestion, CourseTopic, QuestionType
+from .progress import build_course_progress, serialize_active_question
+from .services import create_session, get_session, interact_with_session
 
 
 def _json_error(message: str, *, status: int) -> JsonResponse:
@@ -46,7 +48,7 @@ def _require_token_user(request):
     return user, None
 
 
-def _parse_session_id(raw_value) -> int | None:
+def _parse_positive_int(raw_value) -> int | None:
     if isinstance(raw_value, int) and raw_value > 0:
         return raw_value
     if isinstance(raw_value, str) and raw_value.strip().isdigit():
@@ -56,43 +58,6 @@ def _parse_session_id(raw_value) -> int | None:
     return None
 
 
-def _serialize_course_topic(course_topic: CourseTopic) -> dict:
-    return {
-        "id": course_topic.pk,
-        "name": course_topic.name,
-        "teacher_prompt": course_topic.teacher_prompt,
-        "judge_prompt": course_topic.judge_prompt,
-        "categorizer_prompt": course_topic.categorizer_prompt,
-        "answerer_prompt": course_topic.answerer_prompt,
-        "planner_prompt": course_topic.planner_prompt,
-        "briefer_prompt": course_topic.briefer_prompt,
-        "expectations": normalize_expectations(course_topic.expectations),
-        "created_at": course_topic.created_at.isoformat(),
-        "updated_at": course_topic.updated_at.isoformat(),
-    }
-
-
-def _serialize_session(session) -> dict:
-    course_topic = session.course_topic
-    serialized_topic = None
-    if course_topic is not None:
-        serialized_topic = {
-            "id": course_topic.pk,
-            "name": course_topic.name,
-        }
-
-    return {
-        "session_id": session.pk,
-        "course_topic": serialized_topic,
-        "course_state": serialize_course_state(
-            session.course_state,
-            expectations=course_topic.expectations if course_topic is not None else None,
-        ),
-        "created_at": session.created_at.isoformat(),
-        "updated_at": session.updated_at.isoformat(),
-    }
-
-
 def _require_non_blank_string(payload: dict, field_name: str) -> str:
     value = payload.get(field_name)
     if not isinstance(value, str) or not value.strip():
@@ -100,8 +65,184 @@ def _require_non_blank_string(payload: dict, field_name: str) -> str:
     return value.strip()
 
 
-def _require_expectation_list(payload: dict) -> list[str]:
-    return require_expectations(payload.get("expectations"))
+def _optional_string(payload: dict, field_name: str) -> str:
+    value = payload.get(field_name)
+    if not isinstance(value, str):
+        return ""
+    return value.strip()
+
+
+def _require_object_list(payload: dict, field_name: str) -> list[dict]:
+    value = payload.get(field_name, [])
+    if value in (None, ""):
+        return []
+    if not isinstance(value, list):
+        raise ValueError(f"{field_name} must be a list.")
+    normalized: list[dict] = []
+    for item in value:
+        if not isinstance(item, dict):
+            raise ValueError(f"Each item in {field_name} must be an object.")
+        normalized.append(item)
+    return normalized
+
+
+def _serialize_course(course: Course) -> dict[str, object]:
+    topics = list(course.topics.order_by("name", "id"))
+    question_types = list(course.question_types.order_by("name", "id"))
+    topic_question_counts = {
+        row["topic_id"]: row["count"]
+        for row in course.questions.values("topic_id").order_by().annotate(count=Count("id"))
+    }
+    return {
+        "id": course.pk,
+        "name": course.name,
+        "topic_count": len(topics),
+        "question_type_count": len(question_types),
+        "question_count": course.questions.count(),
+        "topics": [
+            {
+                "id": topic.pk,
+                "name": topic.name,
+                "import_key": topic.import_key,
+                "question_count": topic_question_counts.get(topic.pk, 0),
+            }
+            for topic in topics
+        ],
+        "question_types": [
+            {
+                "id": question_type.pk,
+                "name": question_type.name,
+                "import_key": question_type.import_key,
+            }
+            for question_type in question_types
+        ],
+        "created_at": course.created_at.isoformat(),
+        "updated_at": course.updated_at.isoformat(),
+    }
+
+
+def _serialize_session(session: ChatSession) -> dict[str, object]:
+    course_progress = build_course_progress(course=session.course, user_id=session.user_id)
+    active_question = serialize_active_question(session.active_presentation)
+    return {
+        "session_id": session.pk,
+        "course": {
+            "id": session.course.pk,
+            "name": session.course.name,
+        },
+        "active_question": active_question,
+        "active_topic": active_question["topic"] if active_question is not None else None,
+        "selection_source": active_question["selection_source"] if active_question is not None else None,
+        "course_progress": {
+            "coverage_pct": course_progress["coverage_pct"],
+            "mastery_pct": course_progress["mastery_pct"],
+            "questions_seen": course_progress["questions_seen"],
+            "question_count": course_progress["question_count"],
+        },
+        "topic_progress": course_progress["topic_progress"],
+        "created_at": session.created_at.isoformat(),
+        "updated_at": session.updated_at.isoformat(),
+    }
+
+
+def _resolve_course_topic_for_payload(*, course: Course, item: dict) -> CourseTopic:
+    topic_id = _parse_positive_int(item.get("topic_id"))
+    topic_import_key = _optional_string(item, "topic_import_key")
+    topic_name = _optional_string(item, "topic_name")
+
+    queryset = course.topics.all()
+    if topic_id is not None:
+        topic = queryset.filter(pk=topic_id).first()
+        if topic is not None:
+            return topic
+    if topic_import_key:
+        topic = queryset.filter(import_key=topic_import_key).first()
+        if topic is not None:
+            return topic
+    if topic_name:
+        topic = queryset.filter(name=topic_name).first()
+        if topic is not None:
+            return topic
+    raise ValueError("Each question must reference a valid topic_id, topic_import_key, or topic_name.")
+
+
+def _resolve_question_type_for_payload(*, course: Course, item: dict) -> QuestionType:
+    question_type_id = _parse_positive_int(item.get("question_type_id"))
+    question_type_import_key = _optional_string(item, "question_type_import_key")
+    question_type_name = _optional_string(item, "question_type_name")
+
+    queryset = course.question_types.all()
+    if question_type_id is not None:
+        question_type = queryset.filter(pk=question_type_id).first()
+        if question_type is not None:
+            return question_type
+    if question_type_import_key:
+        question_type = queryset.filter(import_key=question_type_import_key).first()
+        if question_type is not None:
+            return question_type
+    if question_type_name:
+        question_type = queryset.filter(name=question_type_name).first()
+        if question_type is not None:
+            return question_type
+    raise ValueError("Each question must reference a valid question_type_id, question_type_import_key, or question_type_name.")
+
+
+def _create_course_from_payload(payload: dict) -> Course:
+    topics_payload = _require_object_list(payload, "topics")
+    question_types_payload = _require_object_list(payload, "question_types")
+    questions_payload = _require_object_list(payload, "questions")
+
+    with transaction.atomic():
+        course = Course.objects.create(name=_require_non_blank_string(payload, "name"))
+
+        for topic_payload in topics_payload:
+            CourseTopic.objects.create(
+                course=course,
+                name=_require_non_blank_string(topic_payload, "name"),
+                import_key=_optional_string(topic_payload, "import_key"),
+            )
+
+        for question_type_payload in question_types_payload:
+            QuestionType.objects.create(
+                course=course,
+                name=_require_non_blank_string(question_type_payload, "name"),
+                hint_prompt=_require_non_blank_string(question_type_payload, "hint_prompt"),
+                mark_prompt=_require_non_blank_string(question_type_payload, "mark_prompt"),
+                import_key=_optional_string(question_type_payload, "import_key"),
+            )
+
+        for question_payload in questions_payload:
+            max_marks = _parse_positive_int(question_payload.get("max_marks"))
+            if max_marks is None:
+                raise ValueError("Each question must include a positive integer max_marks.")
+            question = CourseQuestion(
+                course=course,
+                topic=_resolve_course_topic_for_payload(course=course, item=question_payload),
+                question_type=_resolve_question_type_for_payload(course=course, item=question_payload),
+                question_text=_require_non_blank_string(question_payload, "question_text"),
+                max_marks=max_marks,
+                sample_answer=_optional_string(question_payload, "sample_answer"),
+                marking_notes=_optional_string(question_payload, "marking_notes"),
+                import_key=_optional_string(question_payload, "import_key"),
+            )
+            question.full_clean()
+            question.save()
+
+    return course
+
+
+def _resolve_selector_override_topic(course: Course, payload: dict) -> CourseTopic | None:
+    topic_id = _parse_positive_int(payload.get("selector_override_topic_id"))
+    if topic_id is None:
+        return None
+    return course.topics.filter(pk=topic_id).first()
+
+
+def _resolve_selector_override_question(course: Course, payload: dict) -> CourseQuestion | None:
+    question_id = _parse_positive_int(payload.get("selector_override_question_id"))
+    if question_id is None:
+        return None
+    return course.questions.filter(pk=question_id).first()
 
 
 @csrf_exempt
@@ -149,6 +290,26 @@ def token_view(request):
 
 
 @csrf_exempt
+@require_http_methods(["GET", "POST"])
+def courses_view(request):
+    user, error_response = _require_token_user(request)
+    if error_response is not None:
+        return error_response
+
+    if request.method == "GET":
+        courses = Course.objects.order_by("name", "id")
+        return JsonResponse({"courses": [_serialize_course(course) for course in courses]})
+
+    try:
+        payload = _load_json_body(request)
+        course = _create_course_from_payload(payload)
+    except (IntegrityError, ValidationError, ValueError) as exc:
+        return _json_error(str(exc), status=400)
+
+    return JsonResponse({"course": _serialize_course(course)}, status=201)
+
+
+@csrf_exempt
 @require_POST
 def create_session_view(request):
     user, error_response = _require_token_user(request)
@@ -160,47 +321,34 @@ def create_session_view(request):
     except ValueError as exc:
         return _json_error(str(exc), status=400)
 
-    course_topic_id = _parse_session_id(payload.get("course_topic_id"))
-    if course_topic_id is None:
-        return _json_error("course_topic_id must be a positive integer.", status=400)
+    course_id = _parse_positive_int(payload.get("course_id"))
+    if course_id is None:
+        return _json_error("course_id must be a positive integer.", status=400)
 
-    course_topic = CourseTopic.objects.filter(pk=course_topic_id).first()
-    if course_topic is None:
-        return _json_error("Course topic not found.", status=404)
+    course = Course.objects.filter(pk=course_id).first()
+    if course is None:
+        return _json_error("Course not found.", status=404)
 
-    session = create_session(user=user, course_topic=course_topic)
-    return JsonResponse(_serialize_session(session), status=201)
+    selector_override_topic = _resolve_selector_override_topic(course, payload)
+    if payload.get("selector_override_topic_id") and selector_override_topic is None:
+        return _json_error("selector_override_topic_id must reference a topic in the selected course.", status=400)
 
-
-@csrf_exempt
-@require_http_methods(["GET", "POST"])
-def course_topics_view(request):
-    user, error_response = _require_token_user(request)
-    if error_response is not None:
-        return error_response
-
-    if request.method == "GET":
-        topics = CourseTopic.objects.order_by("name", "id")
-        return JsonResponse({"topics": [_serialize_course_topic(topic) for topic in topics]})
+    selector_override_question = _resolve_selector_override_question(course, payload)
+    if payload.get("selector_override_question_id") and selector_override_question is None:
+        return _json_error("selector_override_question_id must reference a question in the selected course.", status=400)
 
     try:
-        payload = _load_json_body(request)
-        topic = CourseTopic.objects.create(
-            name=_require_non_blank_string(payload, "name"),
-            teacher_prompt=_require_non_blank_string(payload, "teacher_prompt"),
-            judge_prompt=_require_non_blank_string(payload, "judge_prompt"),
-            categorizer_prompt=_require_non_blank_string(payload, "categorizer_prompt"),
-            answerer_prompt=_require_non_blank_string(payload, "answerer_prompt"),
-            planner_prompt=_require_non_blank_string(payload, "planner_prompt"),
-            briefer_prompt=_require_non_blank_string(payload, "briefer_prompt"),
-            expectations=_require_expectation_list(payload),
+        session = create_session(
+            user=user,
+            course=course,
+            selector_override_topic=selector_override_topic,
+            selector_override_question=selector_override_question,
+            selector_strategy_override=_optional_string(payload, "selector_strategy_override"),
         )
     except ValueError as exc:
         return _json_error(str(exc), status=400)
-    except IntegrityError:
-        return _json_error("A course topic with that name already exists.", status=400)
 
-    return JsonResponse({"topic": _serialize_course_topic(topic)}, status=201)
+    return JsonResponse(_serialize_session(session), status=201)
 
 
 @csrf_exempt
@@ -230,7 +378,7 @@ def chat_view(request):
     except ValueError as exc:
         return _json_error(str(exc), status=400)
 
-    session_id = _parse_session_id(payload.get("session_id"))
+    session_id = _parse_positive_int(payload.get("session_id"))
     if session_id is None:
         return _json_error("session_id must be a positive integer.", status=400)
 
@@ -239,25 +387,20 @@ def chat_view(request):
         return _json_error("text must not be blank.", status=400)
 
     try:
-        session = get_session(user=user, session_id=session_id)
+        session, interaction_result = interact_with_session(user=user, session_id=session_id, text=text)
     except ChatSession.DoesNotExist:
         return _json_error("Session not found.", status=404)
-
-    if session.course_topic is None:
-        return _json_error("Session does not have a course topic.", status=409)
-
-    try:
-        chat = build_chat(user=user, session_id=session_id, session=session, course_topic=session.course_topic)
     except ValueError as exc:
         return _json_error(str(exc), status=400)
-    response = chat.reply(text)
-    return JsonResponse(
+
+    payload = _serialize_session(session)
+    payload.update(
         {
-            "session_id": session_id,
-            "response": response,
-            "course_state": serialize_course_state(
-                chat.course_state,
-                expectations=session.course_topic.expectations,
-            ),
+            "interaction_type": interaction_result.interaction_type,
+            "message": interaction_result.message,
+            "awarded_marks": interaction_result.awarded_marks,
+            "derived_leitner_score": interaction_result.derived_leitner_score,
+            "completed_presentation": interaction_result.completed_presentation,
         }
     )
+    return JsonResponse(payload)

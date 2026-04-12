@@ -6,1128 +6,488 @@
     <title>Agentic Curiosity</title>
     <style>
         :root {
-            --paper: #f7f1e3;
-            --paper-strong: #fffaf0;
-            --ink: #20303a;
-            --muted: #64717a;
-            --line: rgba(32, 48, 58, 0.12);
-            --accent: #d65a31;
-            --accent-deep: #af3e1e;
-            --accent-soft: #ffe1d3;
-            --teal: #2f7c82;
-            --teal-soft: #dff2f0;
-            --shadow: 0 18px 50px rgba(63, 45, 33, 0.12);
-            --radius-lg: 28px;
-            --radius-md: 18px;
-            --radius-sm: 12px;
+            --bg: #f5efe5;
+            --panel: #fffaf2;
+            --ink: #1f1b16;
+            --muted: #6d6257;
+            --line: #d9cbb7;
+            --accent: #0f766e;
+            --accent-soft: #d8f2ee;
+            --danger: #b42318;
         }
 
-        * {
-            box-sizing: border-box;
-        }
-
+        * { box-sizing: border-box; }
         body {
             margin: 0;
-            min-height: 100vh;
+            font-family: Georgia, "Times New Roman", serif;
+            background: radial-gradient(circle at top, #fff8eb 0%, var(--bg) 56%, #eadfce 100%);
             color: var(--ink);
-            background:
-                radial-gradient(circle at top left, rgba(214, 90, 49, 0.18), transparent 30%),
-                radial-gradient(circle at right 20%, rgba(47, 124, 130, 0.14), transparent 28%),
-                linear-gradient(180deg, #fff7ef 0%, #f7f1e3 52%, #efe5d6 100%);
-            font-family: "Trebuchet MS", "Gill Sans", sans-serif;
         }
 
-        body::before,
-        body::after {
-            content: "";
-            position: fixed;
-            inset: auto;
-            width: 22rem;
-            height: 22rem;
-            border-radius: 999px;
-            filter: blur(6px);
-            pointer-events: none;
-            z-index: 0;
-            opacity: 0.45;
-        }
-
-        body::before {
-            top: -6rem;
-            right: -4rem;
-            background: rgba(214, 90, 49, 0.18);
-        }
-
-        body::after {
-            bottom: -8rem;
-            left: -4rem;
-            background: rgba(47, 124, 130, 0.16);
-        }
-
-        .shell {
-            position: relative;
-            z-index: 1;
-            width: min(1180px, calc(100% - 2rem));
-            margin: 0 auto;
-            padding: 2rem 0 3rem;
-        }
-
-        .hero {
+        main {
+            width: min(1100px, calc(100% - 32px));
+            margin: 32px auto 48px;
             display: grid;
-            gap: 1rem;
-            margin-bottom: 1.5rem;
-            padding: 1.5rem;
-            border: 1px solid rgba(255, 255, 255, 0.65);
-            border-radius: var(--radius-lg);
-            background: linear-gradient(135deg, rgba(255, 250, 240, 0.94), rgba(255, 240, 228, 0.84));
-            box-shadow: var(--shadow);
-            animation: rise 500ms ease both;
+            gap: 18px;
         }
 
-        .eyebrow,
-        .status-pill,
-        .hint {
-            letter-spacing: 0.06em;
-            text-transform: uppercase;
-            font-size: 0.74rem;
-            font-weight: 700;
+        .hero, .panel {
+            background: rgba(255, 250, 242, 0.92);
+            border: 1px solid var(--line);
+            border-radius: 18px;
+            padding: 22px;
+            box-shadow: 0 14px 36px rgba(80, 57, 30, 0.08);
         }
 
-        .eyebrow {
-            color: var(--accent-deep);
-        }
+        .hero h1, .panel h2 { margin: 0 0 10px; }
+        .hero p, .panel p { margin: 0; color: var(--muted); line-height: 1.5; }
 
-        h1,
-        h2 {
-            margin: 0;
-            font-family: Georgia, "Palatino Linotype", serif;
-            font-weight: 700;
-            line-height: 1.05;
-        }
-
-        h1 {
-            font-size: clamp(2.5rem, 5vw, 4.2rem);
-            max-width: 12ch;
-        }
-
-        .hero-copy {
-            max-width: 62ch;
-            color: var(--muted);
-            font-size: 1.05rem;
-            line-height: 1.6;
-        }
-
-        .hero-notes {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 0.75rem;
-        }
-
-        .chip {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.4rem;
-            padding: 0.7rem 1rem;
-            border-radius: 999px;
-            border: 1px solid rgba(32, 48, 58, 0.08);
-            background: rgba(255, 255, 255, 0.72);
-            color: var(--ink);
-            font-size: 0.92rem;
-        }
-
-        .link-chip {
-            text-decoration: none;
-        }
-
-        .workspace {
+        .grid {
             display: grid;
-            grid-template-columns: minmax(300px, 370px) minmax(0, 1fr);
-            gap: 1rem;
-        }
-
-        .panel {
-            padding: 1.35rem;
-            border: 1px solid rgba(255, 255, 255, 0.65);
-            border-radius: var(--radius-lg);
-            background: rgba(255, 250, 240, 0.86);
-            box-shadow: var(--shadow);
-            backdrop-filter: blur(8px);
-            animation: rise 560ms ease both;
-        }
-
-        .panel:nth-child(2) {
-            animation-delay: 80ms;
-        }
-
-        .panel-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            gap: 1rem;
-            margin-bottom: 1rem;
-        }
-
-        .status-pill {
-            padding: 0.42rem 0.7rem;
-            border-radius: 999px;
-            background: var(--accent-soft);
-            color: var(--accent-deep);
-        }
-
-        .status-pill.ready {
-            background: var(--teal-soft);
-            color: #18535a;
-        }
-
-        .section {
-            display: grid;
-            gap: 0.85rem;
-            margin-top: 1rem;
-        }
-
-        .field {
-            display: grid;
-            gap: 0.4rem;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 18px;
         }
 
         label {
-            font-size: 0.92rem;
-            font-weight: 700;
-            color: var(--ink);
+            display: block;
+            margin: 14px 0 6px;
+            font-size: 0.95rem;
         }
 
-        input,
-        select,
-        textarea,
-        button {
-            font: inherit;
-        }
-
-        input,
-        select,
-        textarea {
+        input, select, textarea, button {
             width: 100%;
-            padding: 0.85rem 0.95rem;
-            border: 1px solid var(--line);
-            border-radius: var(--radius-sm);
-            background: rgba(255, 255, 255, 0.88);
-            color: var(--ink);
-            transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+            font: inherit;
+            border-radius: 12px;
         }
 
-        input:focus,
-        select:focus,
-        textarea:focus {
-            outline: none;
-            border-color: rgba(214, 90, 49, 0.55);
-            box-shadow: 0 0 0 4px rgba(214, 90, 49, 0.12);
+        input, select, textarea {
+            padding: 12px 14px;
+            border: 1px solid var(--line);
+            background: #fffdf8;
+            color: var(--ink);
         }
 
         textarea {
+            min-height: 140px;
             resize: vertical;
-            min-height: 110px;
-        }
-
-        .button-row,
-        .quick-prompts {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 0.7rem;
         }
 
         button {
             border: 0;
-            border-radius: 999px;
-            padding: 0.8rem 1.15rem;
+            padding: 12px 16px;
+            background: var(--accent);
+            color: white;
             cursor: pointer;
-            transition: transform 160ms ease, box-shadow 160ms ease, opacity 160ms ease;
+            margin-top: 12px;
         }
 
-        button:hover:not(:disabled) {
-            transform: translateY(-1px);
-            box-shadow: 0 10px 22px rgba(32, 48, 58, 0.12);
+        button.secondary {
+            background: #efe4d2;
+            color: var(--ink);
         }
 
         button:disabled {
-            opacity: 0.55;
+            opacity: 0.6;
             cursor: not-allowed;
         }
 
-        .primary {
-            background: linear-gradient(135deg, var(--accent), #e07b39);
-            color: #fff7f2;
+        .status {
+            min-height: 24px;
+            color: var(--muted);
         }
 
-        .secondary {
-            background: rgba(255, 255, 255, 0.9);
-            color: var(--ink);
+        .status.error {
+            color: var(--danger);
+        }
+
+        .meta {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 10px;
+            margin-top: 14px;
+        }
+
+        .card {
             border: 1px solid var(--line);
+            border-radius: 14px;
+            padding: 14px;
+            background: #fffdf8;
         }
 
-        .ghost {
-            background: transparent;
-            color: var(--muted);
-            border: 1px dashed rgba(32, 48, 58, 0.22);
+        .card strong {
+            display: block;
+            margin-bottom: 6px;
         }
 
-        .meta-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-            gap: 0.7rem;
+        .badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 999px;
+            background: var(--accent-soft);
+            color: var(--accent);
+            font-size: 0.88rem;
+            margin-right: 8px;
         }
 
-        .meta-card {
-            padding: 0.85rem 0.95rem;
-            border-radius: var(--radius-md);
-            background: rgba(255, 255, 255, 0.78);
-            border: 1px solid rgba(32, 48, 58, 0.08);
-        }
-
-        .meta-label {
-            color: var(--muted);
-            font-size: 0.78rem;
-            text-transform: uppercase;
-            letter-spacing: 0.06em;
-        }
-
-        .meta-value {
-            margin-top: 0.35rem;
-            font-size: 1rem;
-            font-weight: 700;
-            word-break: break-all;
-        }
-
-        .chat-stage {
-            display: grid;
-            gap: 1rem;
-            min-height: 620px;
+        pre {
+            white-space: pre-wrap;
+            margin: 10px 0 0;
+            font-family: Consolas, monospace;
         }
 
         .transcript {
             display: grid;
-            gap: 0.85rem;
-            align-content: start;
-            min-height: 380px;
-            max-height: 520px;
-            overflow-y: auto;
-            padding: 1rem;
-            border-radius: 24px;
-            background:
-                linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(255, 250, 240, 0.94)),
-                linear-gradient(135deg, rgba(214, 90, 49, 0.05), rgba(47, 124, 130, 0.06));
-            border: 1px solid rgba(32, 48, 58, 0.08);
+            gap: 10px;
+            margin-top: 16px;
         }
 
-        .empty-state {
-            display: grid;
-            place-items: center;
-            min-height: 220px;
-            padding: 1.5rem;
-            text-align: center;
-            color: var(--muted);
-            border: 1px dashed rgba(32, 48, 58, 0.18);
-            border-radius: 20px;
-            background: rgba(255, 255, 255, 0.55);
+        .entry {
+            border-left: 4px solid var(--line);
+            padding: 10px 12px;
+            background: #fffdf8;
         }
 
-        .message {
-            max-width: min(84%, 720px);
-            padding: 0.9rem 1rem;
-            border-radius: 20px;
-            line-height: 1.55;
-            box-shadow: 0 8px 18px rgba(32, 48, 58, 0.08);
-            animation: rise 220ms ease both;
+        .entry strong {
+            display: inline-block;
+            margin-bottom: 4px;
         }
 
-        .message strong {
-            display: block;
-            margin-bottom: 0.3rem;
-            font-size: 0.78rem;
-            letter-spacing: 0.06em;
-            text-transform: uppercase;
-        }
-
-        .message.user {
-            margin-left: auto;
-            background: linear-gradient(135deg, #d65a31, #ea8d4a);
-            color: #fff8f4;
-            border-bottom-right-radius: 8px;
-        }
-
-        .message.assistant {
-            background: rgba(255, 255, 255, 0.94);
-            color: var(--ink);
-            border-bottom-left-radius: 8px;
-        }
-
-        .message.system {
-            max-width: 100%;
-            background: rgba(47, 124, 130, 0.1);
-            color: #20555b;
-            border: 1px solid rgba(47, 124, 130, 0.15);
-            box-shadow: none;
-        }
-
-        .composer {
-            display: grid;
-            gap: 0.85rem;
-        }
-
-        .composer textarea {
-            min-height: 132px;
-        }
-
-        .status-line {
-            min-height: 1.5rem;
-            color: var(--muted);
-            font-size: 0.94rem;
-        }
-
-        .status-line.error {
-            color: #9b2c17;
-        }
-
-        .hint {
-            color: var(--muted);
-        }
-
-        .endpoint-list {
-            display: grid;
-            gap: 0.45rem;
-            padding: 0;
-            margin: 0;
-            list-style: none;
-            color: var(--muted);
-            font-size: 0.92rem;
-        }
-
-        code {
-            padding: 0.15rem 0.35rem;
-            border-radius: 0.4rem;
-            background: rgba(32, 48, 58, 0.06);
-            font-family: "Consolas", "Courier New", monospace;
-            font-size: 0.92em;
-        }
-
-        @keyframes rise {
-            from {
-                opacity: 0;
-                transform: translateY(12px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-
-        @media (max-width: 960px) {
-            .workspace {
-                grid-template-columns: 1fr;
-            }
-
-            .chat-stage {
-                min-height: auto;
-            }
-
-            .transcript {
-                max-height: 420px;
-            }
-        }
-
-        @media (max-width: 640px) {
-            .shell {
-                width: min(100% - 1rem, 1180px);
-                padding-top: 0.75rem;
-            }
-
-            .hero,
-            .panel {
-                padding: 1.05rem;
-                border-radius: 22px;
-            }
-
-            .meta-grid {
-                grid-template-columns: 1fr;
-            }
-
-            .message {
-                max-width: 92%;
-            }
+        a {
+            color: var(--accent);
         }
     </style>
 </head>
 <body>
-    <main class="shell">
-        <section class="hero">
-            <div class="eyebrow">Course Chat Console</div>
-            <h1>Start each chat session with the right stored prompt set.</h1>
-            <p class="hero-copy">
-                Pick a saved course topic, create a session tied to that topic, and keep the prompt set fixed for the
-                life of the session. Existing sessions can be reopened, but their topic stays locked because the stored
-                chat context depends on it.
-            </p>
-            <div class="hero-notes">
-                <span class="chip">Prompt router: <strong>teacher</strong> or <strong>judge</strong></span>
-                <span class="chip">Prompt source: <strong>course topic</strong> records</span>
-                <span class="chip">Transport: <strong>fetch</strong> with JSON</span>
-                <span class="chip">State: token, topic, and current session saved in this browser</span>
-                <a class="chip link-chip" href="{{ course_topics_page_url }}">Open Topic Studio</a>
+<main>
+    <section class="hero">
+        <h1>Question-first tutoring sessions</h1>
+        <p>Start each session from a stored course, keep one active question in focus, and let the app track question attempts and topic progress without global conversation context.</p>
+        <p style="margin-top: 10px;"><a href="{{ course_topics_page_url }}">Open Course Studio</a></p>
+    </section>
+
+    <div class="grid">
+        <section class="panel">
+            <h2>Login</h2>
+            <p>Use the JSON login endpoint to get a token, then load available courses.</p>
+            <label for="username">Username</label>
+            <input id="username" placeholder="alice">
+            <label for="password">Password</label>
+            <input id="password" type="password" placeholder="wonderland">
+            <button id="login-button" type="button">Login and Load Courses</button>
+            <button id="load-courses-button" type="button" class="secondary">Reload Courses</button>
+            <div class="status" id="auth-status">Start by logging in.</div>
+        </section>
+
+        <section class="panel">
+            <h2>Session</h2>
+            <p>Select a course, create a session, and the server will assign the first active question in code.</p>
+            <label for="course-select">Course</label>
+            <select id="course-select">
+                <option value="">Login to load courses</option>
+            </select>
+            <button id="create-session-button" type="button">Create Session</button>
+            <div class="status" id="session-status">No active session.</div>
+            <div class="meta">
+                <div class="card">
+                    <strong>Current Course</strong>
+                    <span id="current-course">none</span>
+                </div>
+                <div class="card">
+                    <strong>Session ID</strong>
+                    <span id="current-session">none</span>
+                </div>
+                <div class="card">
+                    <strong>Coverage</strong>
+                    <span id="current-coverage">0%</span>
+                </div>
+                <div class="card">
+                    <strong>Mastery</strong>
+                    <span id="current-mastery">0%</span>
+                </div>
             </div>
         </section>
+    </div>
 
-        <section class="workspace">
-            <aside class="panel">
-                <div class="panel-header">
-                    <h2>Access</h2>
-                    <span class="status-pill" id="auth-pill">Token Missing</span>
-                </div>
+    <section class="panel">
+        <h2>Active Question</h2>
+        <p id="active-question-summary">No question is active yet.</p>
+        <div id="active-question-card" class="card" hidden>
+            <div><span class="badge" id="active-topic">Topic</span><span class="badge" id="active-type">Type</span></div>
+            <pre id="active-question-text"></pre>
+            <div style="margin-top: 10px; color: var(--muted);">
+                Max marks: <span id="active-max-marks">0</span> |
+                Attempts so far: <span id="active-attempt-count">0</span> |
+                Source: <span id="active-selection-source">none</span>
+            </div>
+        </div>
+    </section>
 
-                <form class="section" id="login-form">
-                    <div class="field">
-                        <label for="username">Username</label>
-                        <input id="username" name="username" type="text" autocomplete="username">
-                    </div>
-                    <div class="field">
-                        <label for="password">Password</label>
-                        <input id="password" name="password" type="password" autocomplete="current-password">
-                    </div>
-                    <div class="button-row">
-                        <button class="primary" type="submit">Log In And Get Token</button>
-                        <button class="secondary" type="button" id="token-button">Use Django Session</button>
-                    </div>
-                </form>
-
-                <div class="section">
-                    <div class="field">
-                        <label for="token">API Token</label>
-                        <textarea id="token" spellcheck="false" placeholder="Paste a token here or log in above."></textarea>
-                    </div>
-                    <div class="button-row">
-                        <button class="secondary" type="button" id="save-token-button">Save Token</button>
-                        <button class="ghost" type="button" id="clear-state-button">Clear Local State</button>
-                    </div>
-                </div>
-
-                <div class="section">
-                    <div class="panel-header">
-                        <h2>Session</h2>
-                        <span class="status-pill" id="session-pill">No Session</span>
-                    </div>
-                    <div class="meta-grid">
-                        <div class="meta-card">
-                            <div class="meta-label">Current User</div>
-                            <div class="meta-value" id="current-user">anonymous</div>
-                        </div>
-                        <div class="meta-card">
-                            <div class="meta-label">Current Session</div>
-                            <div class="meta-value" id="current-session">none</div>
-                        </div>
-                        <div class="meta-card">
-                            <div class="meta-label">Current Topic</div>
-                            <div class="meta-value" id="current-topic">none</div>
-                        </div>
-                    </div>
-                    <div class="field">
-                        <label for="course-topic">Course Topic</label>
-                        <select id="course-topic">
-                            <option value="">Load topics after authentication</option>
-                        </select>
-                    </div>
-                    <div class="field">
-                        <label for="session-id">Session Id</label>
-                        <input id="session-id" type="text" inputmode="numeric" placeholder="Create a session or load an existing session id.">
-                    </div>
-                    <div class="button-row">
-                        <button class="primary" type="button" id="create-session-button">Create Session</button>
-                        <button class="secondary" type="button" id="use-session-button">Use Session Id</button>
-                        <button class="ghost" type="button" id="release-session-button">Leave Current Session</button>
-                    </div>
-                    <p class="hint">Choose a topic before creating a session. When you load an existing session, the stored topic is shown and the selector is locked until you leave that session.</p>
-                </div>
-
-                <div class="section">
-                    <h2>API Routes</h2>
-                    <ul class="endpoint-list">
-                        <li><code>{{ chat_api_login_url }}</code></li>
-                        <li><code>{{ chat_api_token_url }}</code></li>
-                        <li><code>{{ chat_api_course_topics_url }}</code></li>
-                        <li><code>{{ chat_api_sessions_url }}</code></li>
-                        <li><code>{{ chat_api_chat_url }}</code></li>
-                    </ul>
-                </div>
-            </aside>
-
-            <section class="panel chat-stage">
-                <div class="panel-header">
-                    <h2>Chat</h2>
-                    <span class="status-pill ready">AJAX Only</span>
-                </div>
-
-                <div class="quick-prompts">
-                    <button class="secondary quick-prompt" type="button" data-message="Teach me the first important idea in this course topic.">Teach First Idea</button>
-                    <button class="secondary quick-prompt" type="button" data-message="Here is my answer. Can you judge it and explain what I missed?">Judge My Answer</button>
-                    <button class="secondary quick-prompt" type="button" data-message="Give me a short practice question for this course topic.">Give Practice</button>
-                </div>
-
-                <div class="transcript" id="transcript" aria-live="polite">
-                    <div class="empty-state" id="empty-state">
-                        Start by logging in, loading course topics, and creating a session.
-                    </div>
-                </div>
-
-                <form class="composer" id="chat-form">
-                    <div class="field">
-                        <label for="message">Message</label>
-                        <textarea id="message" placeholder="Ask for instruction, answer a question, or request feedback inside the selected course topic."></textarea>
-                    </div>
-                    <div class="button-row">
-                        <button class="primary" type="submit" id="send-button">Send Message</button>
-                        <button class="secondary" type="button" id="new-thread-button">New Session And Send Next Message</button>
-                    </div>
-                    <div class="status-line" id="status-line">Waiting for input.</div>
-                </form>
-            </section>
+    <div class="grid">
+        <section class="panel">
+            <h2>Respond</h2>
+            <p>Ask for a hint, submit an answer, or say “skip” to move on.</p>
+            <label for="message">Message</label>
+            <textarea id="message" placeholder="Type an answer, ask for a hint, or say skip."></textarea>
+            <button id="send-button" type="button">Send</button>
+            <div class="status" id="chat-status">Waiting for a session.</div>
         </section>
-    </main>
 
-    <script>
-        const apiConfig = {
-            loginUrl: "{{ chat_api_login_url|escapejs }}",
-            tokenUrl: "{{ chat_api_token_url|escapejs }}",
-            courseTopicsUrl: "{{ chat_api_course_topics_url|escapejs }}",
-            sessionsUrl: "{{ chat_api_sessions_url|escapejs }}",
-            chatUrl: "{{ chat_api_chat_url|escapejs }}"
-        };
+        <section class="panel">
+            <h2>Topic Progress</h2>
+            <p>Coverage and mastery are derived from question-level learner state.</p>
+            <div id="topic-progress" class="transcript">
+                <div class="entry"><strong>Topic progress</strong><div>No course loaded yet.</div></div>
+            </div>
+        </section>
+    </div>
 
-        const storageKeys = {
-            token: "agentic-curiosity.token",
-            sessionId: "agentic-curiosity.sessionId",
-            username: "agentic-curiosity.username",
-            topicId: "agentic-curiosity.courseTopicId",
-            topicName: "agentic-curiosity.courseTopicName"
-        };
+    <section class="panel">
+        <h2>Latest Interactions</h2>
+        <div id="transcript" class="transcript">
+            <div class="entry"><strong>System</strong><div>Session responses will appear here.</div></div>
+        </div>
+    </section>
+</main>
 
-        const state = {
-            token: localStorage.getItem(storageKeys.token) || "",
-            sessionId: localStorage.getItem(storageKeys.sessionId) || "",
-            username: localStorage.getItem(storageKeys.username) || "anonymous",
-            topicId: localStorage.getItem(storageKeys.topicId) || "",
-            topicName: localStorage.getItem(storageKeys.topicName) || ""
-        };
+<script>
+    const config = {
+        loginUrl: "{{ chat_api_login_url|escapejs }}",
+        tokenUrl: "{{ chat_api_token_url|escapejs }}",
+        coursesUrl: "{{ chat_api_courses_url|escapejs }}",
+        sessionsUrl: "{{ chat_api_sessions_url|escapejs }}",
+        chatUrl: "{{ chat_api_chat_url|escapejs }}"
+    };
 
-        const availableTopics = [];
-        const authPill = document.getElementById("auth-pill");
-        const sessionPill = document.getElementById("session-pill");
-        const currentUser = document.getElementById("current-user");
-        const currentSession = document.getElementById("current-session");
-        const currentTopic = document.getElementById("current-topic");
-        const tokenField = document.getElementById("token");
-        const topicField = document.getElementById("course-topic");
-        const sessionField = document.getElementById("session-id");
-        const messageField = document.getElementById("message");
-        const transcript = document.getElementById("transcript");
-        const statusLine = document.getElementById("status-line");
-        const sendButton = document.getElementById("send-button");
-        const createSessionButton = document.getElementById("create-session-button");
-        const useSessionButton = document.getElementById("use-session-button");
-        const releaseSessionButton = document.getElementById("release-session-button");
-        const saveTokenButton = document.getElementById("save-token-button");
-        const clearStateButton = document.getElementById("clear-state-button");
-        const tokenButton = document.getElementById("token-button");
-        const newThreadButton = document.getElementById("new-thread-button");
-        const loginForm = document.getElementById("login-form");
-        const chatForm = document.getElementById("chat-form");
+    const storageKeys = {
+        token: "agentic-curiosity.token",
+        sessionId: "agentic-curiosity.sessionId",
+        courseId: "agentic-curiosity.courseId",
+        courseName: "agentic-curiosity.courseName"
+    };
 
-        function storeValue(key, value) {
-            if (value) {
-                localStorage.setItem(key, value);
-                return;
-            }
+    const state = {
+        token: localStorage.getItem(storageKeys.token) || "",
+        sessionId: localStorage.getItem(storageKeys.sessionId) || "",
+        courseId: localStorage.getItem(storageKeys.courseId) || "",
+        courseName: localStorage.getItem(storageKeys.courseName) || ""
+    };
 
-            localStorage.removeItem(key);
-        }
+    const authStatus = document.getElementById("auth-status");
+    const sessionStatus = document.getElementById("session-status");
+    const chatStatus = document.getElementById("chat-status");
+    const transcript = document.getElementById("transcript");
+    const topicProgress = document.getElementById("topic-progress");
+    const usernameField = document.getElementById("username");
+    const passwordField = document.getElementById("password");
+    const courseSelect = document.getElementById("course-select");
+    const currentCourse = document.getElementById("current-course");
+    const currentSession = document.getElementById("current-session");
+    const currentCoverage = document.getElementById("current-coverage");
+    const currentMastery = document.getElementById("current-mastery");
+    const activeQuestionSummary = document.getElementById("active-question-summary");
+    const activeQuestionCard = document.getElementById("active-question-card");
+    const activeTopic = document.getElementById("active-topic");
+    const activeType = document.getElementById("active-type");
+    const activeQuestionText = document.getElementById("active-question-text");
+    const activeMaxMarks = document.getElementById("active-max-marks");
+    const activeAttemptCount = document.getElementById("active-attempt-count");
+    const activeSelectionSource = document.getElementById("active-selection-source");
+    const messageField = document.getElementById("message");
 
-        function persistState() {
-            storeValue(storageKeys.token, state.token);
-            storeValue(storageKeys.sessionId, state.sessionId);
-            storeValue(storageKeys.username, state.username);
-            storeValue(storageKeys.topicId, state.topicId);
-            storeValue(storageKeys.topicName, state.topicName);
-        }
+    let availableCourses = [];
 
-        function findTopic(topicId) {
-            return availableTopics.find((topic) => String(topic.id) === String(topicId)) || null;
-        }
+    function setStatus(target, message, isError = false) {
+        target.textContent = message;
+        target.classList.toggle("error", isError);
+    }
 
-        function renderCourseTopics() {
-            topicField.innerHTML = "";
+    function storeState() {
+        localStorage.setItem(storageKeys.token, state.token);
+        localStorage.setItem(storageKeys.sessionId, state.sessionId);
+        localStorage.setItem(storageKeys.courseId, state.courseId);
+        localStorage.setItem(storageKeys.courseName, state.courseName);
+    }
 
-            const placeholder = document.createElement("option");
-            placeholder.value = "";
-            placeholder.textContent = state.token
-                ? (availableTopics.length ? "Select a course topic" : "No topics available yet")
-                : "Load topics after authentication";
-            topicField.appendChild(placeholder);
+    function appendEntry(title, body) {
+        const entry = document.createElement("div");
+        entry.className = "entry";
+        entry.innerHTML = `<strong>${title}</strong><div>${body}</div>`;
+        transcript.prepend(entry);
+    }
 
-            availableTopics.forEach((topic) => {
-                const option = document.createElement("option");
-                option.value = String(topic.id);
-                option.textContent = topic.name;
-                topicField.appendChild(option);
-            });
+    function renderCourses() {
+        courseSelect.innerHTML = "";
+        const placeholder = document.createElement("option");
+        placeholder.value = "";
+        placeholder.textContent = availableCourses.length ? "Select a course" : "No courses available";
+        courseSelect.appendChild(placeholder);
 
-            if (state.topicId && !findTopic(state.topicId)) {
-                const lockedOption = document.createElement("option");
-                lockedOption.value = state.topicId;
-                lockedOption.textContent = state.topicName || `Topic ${state.topicId}`;
-                topicField.appendChild(lockedOption);
-            }
-
-            topicField.value = state.topicId || "";
-        }
-
-        function syncUi() {
-            const topicLocked = Boolean(state.sessionId);
-
-            tokenField.value = state.token;
-            sessionField.value = state.sessionId;
-            topicField.value = state.topicId || "";
-            currentUser.textContent = state.username || "anonymous";
-            currentSession.textContent = state.sessionId || "none";
-            currentTopic.textContent = state.topicName || "none";
-
-            authPill.textContent = state.token ? "Token Ready" : "Token Missing";
-            authPill.classList.toggle("ready", Boolean(state.token));
-
-            if (state.sessionId) {
-                sessionPill.textContent = "Session Active";
-            } else if (state.topicId) {
-                sessionPill.textContent = "Topic Selected";
-            } else {
-                sessionPill.textContent = "No Session";
-            }
-            sessionPill.classList.toggle("ready", Boolean(state.sessionId || state.topicId));
-
-            topicField.disabled = !state.token || topicLocked || availableTopics.length === 0;
-            sendButton.disabled = !state.token || (!state.sessionId && !state.topicId);
-            createSessionButton.disabled = !state.token || !state.topicId;
-            useSessionButton.disabled = !state.token;
-            releaseSessionButton.disabled = !state.sessionId;
-            newThreadButton.disabled = !state.token || !state.topicId;
-        }
-
-        function setStatus(message, type = "info") {
-            statusLine.textContent = message;
-            statusLine.classList.toggle("error", type === "error");
-        }
-
-        function headers({ json = true, token = true } = {}) {
-            const result = {};
-            if (json) {
-                result["Content-Type"] = "application/json";
-            }
-            if (token && state.token) {
-                result["Authorization"] = `Token ${state.token}`;
-            }
-            return result;
-        }
-
-        function resetTranscript(message) {
-            transcript.innerHTML = "";
-            const panel = document.createElement("div");
-            panel.className = "empty-state";
-            panel.id = "empty-state";
-            panel.textContent = message;
-            transcript.appendChild(panel);
-        }
-
-        function removeEmptyState() {
-            const emptyState = document.getElementById("empty-state");
-            if (emptyState && emptyState.parentNode) {
-                emptyState.parentNode.removeChild(emptyState);
-            }
-        }
-
-        function appendMessage(role, title, content) {
-            removeEmptyState();
-
-            const bubble = document.createElement("article");
-            bubble.className = `message ${role}`;
-
-            const heading = document.createElement("strong");
-            heading.textContent = title;
-            bubble.appendChild(heading);
-
-            const body = document.createElement("div");
-            body.textContent = content;
-            bubble.appendChild(body);
-
-            transcript.appendChild(bubble);
-            transcript.scrollTop = transcript.scrollHeight;
-        }
-
-        async function requestJson(url, options = {}) {
-            const response = await fetch(url, {
-                credentials: "same-origin",
-                ...options
-            });
-
-            let payload = {};
-            try {
-                payload = await response.json();
-            } catch (_error) {
-                payload = {};
-            }
-
-            if (!response.ok) {
-                const message = payload.error || `Request failed with status ${response.status}.`;
-                throw new Error(message);
-            }
-
-            return payload;
-        }
-
-        async function loadCourseTopics() {
-            if (!state.token) {
-                availableTopics.splice(0, availableTopics.length);
-                renderCourseTopics();
-                syncUi();
-                return;
-            }
-
-            const payload = await requestJson(apiConfig.courseTopicsUrl, {
-                method: "GET",
-                headers: headers({ json: false })
-            });
-
-            availableTopics.splice(0, availableTopics.length, ...payload.topics);
-
-            if (!state.topicId && availableTopics.length === 1) {
-                state.topicId = String(availableTopics[0].id);
-                state.topicName = availableTopics[0].name;
-            }
-
-            const matchedTopic = findTopic(state.topicId);
-            if (matchedTopic) {
-                state.topicName = matchedTopic.name;
-            }
-
-            persistState();
-            renderCourseTopics();
-            syncUi();
-        }
-
-        function leaveCurrentSession({ preserveTopic = true, message = "Left the current session." } = {}) {
-            state.sessionId = "";
-            if (!preserveTopic) {
-                state.topicId = "";
-                state.topicName = "";
-            }
-
-            persistState();
-            renderCourseTopics();
-            syncUi();
-            resetTranscript("Start by creating a session for the selected course topic.");
-            setStatus(message);
-        }
-
-        async function createSession() {
-            if (!state.topicId) {
-                throw new Error("Choose a course topic before creating a session.");
-            }
-
-            const payload = await requestJson(apiConfig.sessionsUrl, {
-                method: "POST",
-                headers: headers(),
-                body: JSON.stringify({
-                    course_topic_id: Number(state.topicId)
-                })
-            });
-
-            state.sessionId = String(payload.session_id);
-            state.topicId = payload.course_topic ? String(payload.course_topic.id) : "";
-            state.topicName = payload.course_topic ? payload.course_topic.name : "";
-            persistState();
-            renderCourseTopics();
-            syncUi();
-            resetTranscript(`Session ${state.sessionId} is ready. The server will keep using the ${state.topicName} prompt set for this session.`);
-            appendMessage("system", "Session", `Created session ${state.sessionId} using ${state.topicName}.`);
-            return state.sessionId;
-        }
-
-        async function loadSession(sessionId) {
-            const payload = await requestJson(`${apiConfig.sessionsUrl}${sessionId}/`, {
-                method: "GET",
-                headers: headers({ json: false })
-            });
-
-            if (!payload.course_topic) {
-                throw new Error("Session does not have a stored course topic.");
-            }
-
-            state.sessionId = String(payload.session_id);
-            state.topicId = String(payload.course_topic.id);
-            state.topicName = payload.course_topic.name;
-            persistState();
-            renderCourseTopics();
-            syncUi();
-            resetTranscript(`Loaded session ${state.sessionId}. The topic is locked to ${state.topicName}. Browser transcript starts fresh here; server-side context is preserved.`);
-            appendMessage("system", "Session", `Loaded existing session ${state.sessionId} for ${state.topicName}.`);
-        }
-
-        async function ensureSession() {
-            if (state.sessionId) {
-                return state.sessionId;
-            }
-
-            setStatus("Creating a chat session...");
-            return createSession();
-        }
-
-        async function sendMessage({ forceNewSession = false } = {}) {
-            const text = messageField.value.trim();
-            if (!text) {
-                setStatus("Write a message before sending.", "error");
-                return;
-            }
-
-            if (!state.token) {
-                setStatus("Log in or paste a token first.", "error");
-                return;
-            }
-
-            if (!state.topicId) {
-                setStatus("Choose a course topic first.", "error");
-                return;
-            }
-
-            try {
-                if (forceNewSession) {
-                    leaveCurrentSession({
-                        preserveTopic: true,
-                        message: "Preparing a fresh session with the selected topic..."
-                    });
-                }
-
-                const sessionId = await ensureSession();
-                appendMessage("user", "You", text);
-                messageField.value = "";
-                setStatus("Waiting for the chat API...");
-
-                const payload = await requestJson(apiConfig.chatUrl, {
-                    method: "POST",
-                    headers: headers(),
-                    body: JSON.stringify({
-                        session_id: Number(sessionId),
-                        text
-                    })
-                });
-
-                appendMessage("assistant", "Tutor", payload.response);
-                setStatus(`Reply received for session ${payload.session_id}.`);
-            } catch (error) {
-                setStatus(error.message, "error");
-                appendMessage("system", "Error", error.message);
-            }
-        }
-
-        loginForm.addEventListener("submit", async (event) => {
-            event.preventDefault();
-            const username = document.getElementById("username").value.trim();
-            const password = document.getElementById("password").value;
-
-            if (!username || !password) {
-                setStatus("Enter both username and password.", "error");
-                return;
-            }
-
-            try {
-                setStatus("Logging in and issuing a token...");
-                const payload = await requestJson(apiConfig.loginUrl, {
-                    method: "POST",
-                    headers: headers({ token: false }),
-                    body: JSON.stringify({ username, password })
-                });
-
-                state.token = payload.token;
-                state.username = payload.username;
-                persistState();
-                renderCourseTopics();
-                syncUi();
-                await loadCourseTopics();
-                document.getElementById("password").value = "";
-                setStatus(`Logged in as ${payload.username}.`);
-                appendMessage("system", "Auth", `Authenticated as ${payload.username}.`);
-            } catch (error) {
-                setStatus(error.message, "error");
-            }
+        availableCourses.forEach((course) => {
+            const option = document.createElement("option");
+            option.value = String(course.id);
+            option.textContent = `${course.name} (${course.question_count} questions)`;
+            courseSelect.appendChild(option);
         });
 
-        tokenButton.addEventListener("click", async () => {
-            try {
-                setStatus("Requesting a token from the current Django session...");
-                const payload = await requestJson(apiConfig.tokenUrl, {
-                    method: "POST",
-                    headers: headers({ token: false })
-                });
+        courseSelect.value = state.courseId || "";
+    }
 
-                state.token = payload.token;
-                state.username = payload.username;
-                persistState();
-                renderCourseTopics();
-                syncUi();
-                await loadCourseTopics();
-                setStatus(`Token loaded for ${payload.username}.`);
-                appendMessage("system", "Auth", `Loaded token for ${payload.username}.`);
-            } catch (error) {
-                setStatus(error.message, "error");
-            }
-        });
+    function renderSession(payload) {
+        state.sessionId = payload.session_id ? String(payload.session_id) : "";
+        state.courseId = payload.course ? String(payload.course.id) : "";
+        state.courseName = payload.course ? payload.course.name : "";
+        storeState();
 
-        saveTokenButton.addEventListener("click", async () => {
-            state.token = tokenField.value.trim();
-            persistState();
-            renderCourseTopics();
-            syncUi();
+        currentCourse.textContent = state.courseName || "none";
+        currentSession.textContent = state.sessionId || "none";
+        currentCoverage.textContent = `${payload.course_progress.coverage_pct}%`;
+        currentMastery.textContent = `${payload.course_progress.mastery_pct}%`;
+        courseSelect.value = state.courseId || "";
 
-            if (!state.token) {
-                availableTopics.splice(0, availableTopics.length);
-                renderCourseTopics();
-                syncUi();
-                setStatus("Token cleared from this browser.");
-                return;
-            }
-
-            try {
-                await loadCourseTopics();
-                setStatus("Token saved in this browser.");
-            } catch (error) {
-                setStatus(error.message, "error");
-            }
-        });
-
-        clearStateButton.addEventListener("click", () => {
-            state.token = "";
-            state.sessionId = "";
-            state.username = "anonymous";
-            state.topicId = "";
-            state.topicName = "";
-            availableTopics.splice(0, availableTopics.length);
-            persistState();
-            renderCourseTopics();
-            syncUi();
-            resetTranscript("Start by logging in, loading course topics, and creating a session.");
-            setStatus("Local token, topic, and session state cleared.");
-            appendMessage("system", "State", "Cleared token, topic, and session from local browser storage.");
-        });
-
-        createSessionButton.addEventListener("click", async () => {
-            if (!state.token) {
-                setStatus("Log in or paste a token first.", "error");
-                return;
-            }
-
-            if (!state.topicId) {
-                setStatus("Choose a course topic first.", "error");
-                return;
-            }
-
-            try {
-                if (state.sessionId) {
-                    leaveCurrentSession({
-                        preserveTopic: true,
-                        message: "Preparing a fresh session with the selected topic..."
-                    });
-                }
-
-                setStatus("Creating a fresh session...");
-                await createSession();
-                setStatus(`Session ${state.sessionId} is ready.`);
-            } catch (error) {
-                setStatus(error.message, "error");
-            }
-        });
-
-        useSessionButton.addEventListener("click", async () => {
-            const chosen = sessionField.value.trim();
-            if (!chosen) {
-                setStatus("Enter a session id first.", "error");
-                return;
-            }
-
-            try {
-                setStatus("Loading stored session details...");
-                await loadCourseTopics();
-                await loadSession(chosen);
-                setStatus(`Using session ${chosen} with topic ${state.topicName}.`);
-            } catch (error) {
-                setStatus(error.message, "error");
-                appendMessage("system", "Error", error.message);
-            }
-        });
-
-        releaseSessionButton.addEventListener("click", () => {
-            if (!state.sessionId) {
-                setStatus("No active session to leave.", "error");
-                return;
-            }
-
-            leaveCurrentSession({
-                preserveTopic: true,
-                message: "Current session released. You can keep this topic or choose a different one."
-            });
-            appendMessage("system", "Session", "Released the current session. Select a topic and create a new one when ready.");
-        });
-
-        topicField.addEventListener("change", () => {
-            if (state.sessionId) {
-                topicField.value = state.topicId || "";
-                return;
-            }
-
-            const topic = findTopic(topicField.value);
-            state.topicId = topic ? String(topic.id) : "";
-            state.topicName = topic ? topic.name : "";
-            persistState();
-            syncUi();
-            setStatus(state.topicName ? `Selected topic ${state.topicName}.` : "Choose a course topic to begin.");
-        });
-
-        chatForm.addEventListener("submit", async (event) => {
-            event.preventDefault();
-            await sendMessage();
-        });
-
-        newThreadButton.addEventListener("click", async () => {
-            await sendMessage({ forceNewSession: true });
-        });
-
-        document.querySelectorAll(".quick-prompt").forEach((button) => {
-            button.addEventListener("click", () => {
-                messageField.value = button.dataset.message || "";
-                messageField.focus();
-            });
-        });
-
-        renderCourseTopics();
-        syncUi();
-
-        if (state.token) {
-            loadCourseTopics()
-                .then(() => {
-                    if (state.sessionId) {
-                        setStatus(`Ready. Session ${state.sessionId} is selected.`);
-                    } else if (state.topicId) {
-                        setStatus(`Ready. Topic ${state.topicName} is selected.`);
-                    } else {
-                        setStatus("Ready. Choose a course topic and start a session.");
-                    }
-                })
-                .catch((error) => {
-                    setStatus(error.message, "error");
-                });
+        if (payload.active_question) {
+            activeQuestionCard.hidden = false;
+            activeQuestionSummary.textContent = "Current active question";
+            activeTopic.textContent = payload.active_question.topic.name;
+            activeType.textContent = payload.active_question.question_type.name;
+            activeQuestionText.textContent = payload.active_question.question_text;
+            activeMaxMarks.textContent = payload.active_question.max_marks;
+            activeAttemptCount.textContent = payload.active_question.attempt_count;
+            activeSelectionSource.textContent = payload.active_question.selection_source || "none";
         } else {
-            setStatus("Waiting for input.");
+            activeQuestionCard.hidden = true;
+            activeQuestionSummary.textContent = "No active question is available for this session.";
         }
-    </script>
+
+        topicProgress.innerHTML = "";
+        const rows = payload.topic_progress || [];
+        if (!rows.length) {
+            topicProgress.innerHTML = '<div class="entry"><strong>Topic progress</strong><div>No topics or questions are configured for this course yet.</div></div>';
+        } else {
+            rows.forEach((row) => {
+                const entry = document.createElement("div");
+                entry.className = "entry";
+                entry.innerHTML = `<strong>${row.name}</strong><div>Coverage ${row.coverage_pct}% | Mastery ${row.mastery_pct}% | Seen ${row.questions_seen}/${row.question_count}</div>`;
+                topicProgress.appendChild(entry);
+            });
+        }
+    }
+
+    async function fetchJson(url, options = {}) {
+        const headers = new Headers(options.headers || {});
+        if (state.token) {
+            headers.set("Authorization", `Token ${state.token}`);
+        }
+        if (options.body && !headers.has("Content-Type")) {
+            headers.set("Content-Type", "application/json");
+        }
+        const response = await fetch(url, { ...options, headers });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(payload.error || `Request failed with status ${response.status}.`);
+        }
+        return payload;
+    }
+
+    async function loadCourses() {
+        if (!state.token) {
+            throw new Error("Login first.");
+        }
+        const payload = await fetchJson(config.coursesUrl);
+        availableCourses = payload.courses || [];
+        renderCourses();
+        setStatus(authStatus, `Loaded ${availableCourses.length} course(s).`);
+    }
+
+    async function login() {
+        const username = usernameField.value.trim();
+        const password = passwordField.value;
+        if (!username || !password) {
+            throw new Error("username and password are required.");
+        }
+        const payload = await fetchJson(config.loginUrl, {
+            method: "POST",
+            body: JSON.stringify({ username, password })
+        });
+        state.token = payload.token;
+        storeState();
+        setStatus(authStatus, `Authenticated as ${payload.username}.`);
+        await loadCourses();
+    }
+
+    async function createSession() {
+        if (!courseSelect.value) {
+            throw new Error("Select a course first.");
+        }
+        const payload = await fetchJson(config.sessionsUrl, {
+            method: "POST",
+            body: JSON.stringify({ course_id: Number(courseSelect.value) })
+        });
+        renderSession(payload);
+        setStatus(sessionStatus, `Created session ${payload.session_id} for ${payload.course.name}.`);
+        appendEntry("Session", `Created session ${payload.session_id} for ${payload.course.name}.`);
+    }
+
+    async function sendMessage() {
+        if (!state.sessionId) {
+            throw new Error("Create a session first.");
+        }
+        const text = messageField.value.trim();
+        if (!text) {
+            throw new Error("Type a message first.");
+        }
+        const payload = await fetchJson(config.chatUrl, {
+            method: "POST",
+            body: JSON.stringify({ session_id: Number(state.sessionId), text })
+        });
+        renderSession(payload);
+        messageField.value = "";
+        const extras = [];
+        if (payload.awarded_marks !== null && payload.awarded_marks !== undefined) {
+            extras.push(`Marks: ${payload.awarded_marks}`);
+        }
+        if (payload.derived_leitner_score !== null && payload.derived_leitner_score !== undefined) {
+            extras.push(`Leitner: ${payload.derived_leitner_score}`);
+        }
+        if (payload.completed_presentation) {
+            extras.push("Question closed");
+        }
+        appendEntry(
+            payload.interaction_type,
+            `${payload.message}${extras.length ? `<div style="margin-top:6px; color:#6d6257;">${extras.join(" | ")}</div>` : ""}`
+        );
+        setStatus(chatStatus, `Handled ${payload.interaction_type}.`);
+    }
+
+    document.getElementById("login-button").addEventListener("click", () => {
+        setStatus(authStatus, "Logging in...");
+        login().catch((error) => setStatus(authStatus, error.message, true));
+    });
+
+    document.getElementById("load-courses-button").addEventListener("click", () => {
+        setStatus(authStatus, "Loading courses...");
+        loadCourses().catch((error) => setStatus(authStatus, error.message, true));
+    });
+
+    document.getElementById("create-session-button").addEventListener("click", () => {
+        setStatus(sessionStatus, "Creating session...");
+        createSession().catch((error) => setStatus(sessionStatus, error.message, true));
+    });
+
+    document.getElementById("send-button").addEventListener("click", () => {
+        setStatus(chatStatus, "Sending...");
+        sendMessage().catch((error) => setStatus(chatStatus, error.message, true));
+    });
+
+    courseSelect.addEventListener("change", () => {
+        const selected = availableCourses.find((course) => String(course.id) === courseSelect.value) || null;
+        state.courseId = selected ? String(selected.id) : "";
+        state.courseName = selected ? selected.name : "";
+        storeState();
+    });
+
+    if (state.token) {
+        loadCourses().catch((error) => setStatus(authStatus, error.message, true));
+    }
+</script>
 </body>
 </html>
