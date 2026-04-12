@@ -1,4 +1,4 @@
 interface:
   display_name: "Agentic Curiosity"
-  short_description: "Project map and editing workflow"
-  default_prompt: "Use $agentic-curiosity-project to understand and modify this Django repo safely."
+  short_description: "Repo map and question-first workflow"
+  default_prompt: "Use $agentic-curiosity-project to understand and modify this Django repo's current question-first course engine safely."

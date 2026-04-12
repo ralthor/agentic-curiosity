@@ -9,7 +9,7 @@
 
 ## Django Project Package
 
-- `agentic_curiosity/settings.py`: Global Django settings. Uses SQLite, includes `core`, `ai_chat`, and `chat_api`, and exposes chat model/context knobs such as `AI_CHAT_MODEL`, `AI_CHAT_MODEL_RECENT_TURNS`, and `AI_CHAT_LOG_LEVEL`.
+- `agentic_curiosity/settings.py`: Global Django settings. Uses SQLite, includes `core`, `ai_chat`, and `chat_api`, and exposes OpenAI/chat settings such as `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `AI_CHAT_MODEL`, `AI_CHAT_ANSWERER_MODEL`, `AI_CHAT_MODEL_RECENT_TURNS`, and `AI_CHAT_LOG_LEVEL`.
 - `agentic_curiosity/urls.py`: Root URL config. Routes `""` to `core.urls`, `/api/chat/` to `chat_api.urls`, and `/admin/` to Django admin.
 - `agentic_curiosity/asgi.py` and `agentic_curiosity/wsgi.py`: Standard Django entry points.
 
@@ -17,37 +17,41 @@
 
 ### `core`
 
-- `core/views.py`: Renders the browser chat console at `/` and the topic-management page at `/course-topics/`.
-- `core/urls.py`: Wires the root route and the course-topic page.
-- `core/templates/core/home.html`: Chat console for login, topic selection, session creation/retrieval, and sending messages.
-- `core/templates/core/course_topics.html`: Browser UI for creating and inspecting stored `CourseTopic` records.
+- `core/views.py`: Renders the browser chat console at `/` and the course-studio page at `/course-topics/`.
+- `core/urls.py`: Wires the root route and the course-studio page.
+- `core/templates/core/home.html`: Chat console for login, course selection, session creation/retrieval, active-question display, and sending messages.
+- `core/templates/core/course_topics.html`: Browser UI for creating courses, listing stored course content, and importing questions into an existing course.
 - `core/tests.py`: Route and template smoke tests for the browser pages.
 
 ### `ai_chat`
 
 - `ai_chat/__init__.py`: Public exports for the app.
 - `ai_chat/agents.py`: Provider-agnostic `Agent` base class. Shared logic lives here.
-- `ai_chat/chat.py`: Persisted chat orchestration, including local teacher/judge routing for course flows, conditional planner updates, turn storage, and context compaction.
-- `ai_chat/models.py`: Persisted chat tables: `ChatSession`, `ChatTurn`, and `ChatContext`.
-- `ai_chat/admin.py`: Django admin registration for sessions, turns, and context.
 - `ai_chat/openai_agent.py`: `OpenAIAgent` implementation using the OpenAI SDK chat completions client.
+- `ai_chat/models.py`: Persisted tutoring/session tables: `ChatSession`, `QuestionPresentation`, `QuestionAttempt`, and `LearnerQuestionState`.
+- `ai_chat/admin.py`: Django admin registration for sessions, presentations, attempts, and learner state.
 - `ai_chat/exceptions.py`: `AgentConfigurationError` and `AgentResponseError`.
 - `ai_chat/tests.py`: Behavioral tests for the base class and `OpenAIAgent`.
 
 ### `chat_api`
 
-- `chat_api/models.py`: `ApiToken` plus `CourseTopic`, which stores the course prompt bundle and ordered `expectations` list.
-- `chat_api/services.py`: Bridges HTTP/session workflow to `ai_chat.Chat`, including prompt resolution from a session's locked `CourseTopic` and compact course-state initialization.
-- `chat_api/views.py`: Token-authenticated JSON endpoints for login, token issuance, course topics, session creation, session lookup, and chat replies.
+- `chat_api/models.py`: `ApiToken` plus the course content model set: `Course`, `CourseTopic`, `QuestionType`, and `CourseQuestion`.
+- `chat_api/question_selector.py`: Selects the next question using explicit overrides, unseen/due/fallback pools, and topic balancing.
+- `chat_api/progress.py`: Computes course/topic coverage and mastery summaries and serializes the active question.
+- `chat_api/services.py`: Core question-first tutoring workflow: session creation, interaction classification, hint/mark prompt construction, learner-state updates, and question advancement.
+- `chat_api/views.py`: Token-authenticated JSON endpoints for login, token issuance, course CRUD-lite flows, question import, session creation, session lookup, and chat replies.
 - `chat_api/urls.py`: Routes under `/api/chat/`.
-- `chat_api/admin.py`: Django admin registration for API tokens and course topics.
+- `chat_api/admin.py`: Django admin registration for courses, topics, question types, questions, and API tokens.
 - `chat_api/tests.py`: Endpoint and service tests for the authenticated chat flow.
 
 ## Change Patterns
 
 - For generic chat behavior shared across providers, edit `ai_chat/agents.py`.
-- For persisted routing, session storage, timestamps, or context behavior, edit `ai_chat/chat.py` and/or `ai_chat/models.py`.
-- For course-topic-backed prompt selection or token-authenticated chat workflow, edit `chat_api/models.py`, `chat_api/services.py`, `chat_api/views.py`, and `chat_api/urls.py`.
+- For OpenAI wiring or Chat Completions payload behavior, edit `ai_chat/openai_agent.py`.
+- For persisted session storage, active-question state, attempts, or learner progression, edit `ai_chat/models.py` and/or `chat_api/services.py`.
+- For course content, token-authenticated chat workflow, or response serialization, edit `chat_api/models.py`, `chat_api/services.py`, `chat_api/views.py`, and `chat_api/urls.py`.
+- For next-question logic, edit `chat_api/question_selector.py`.
+- For progress, coverage, mastery, or active-question summaries, edit `chat_api/progress.py`.
 - For browser workflow changes, edit `core/views.py`, `core/urls.py`, and the relevant template in `core/templates/core/`.
 - For one provider only, add or modify a dedicated module in `ai_chat/`.
 - Keep the OpenAI-shaped input contract centered on `Agent.create()`.
@@ -55,6 +59,18 @@
 - Re-export public provider classes in `ai_chat/__init__.py`.
 - Add tests in `ai_chat/tests.py`, `chat_api/tests.py`, or `core/tests.py` whenever behavior changes in those areas.
 - For any new feature, add tests with the feature work and run both the focused new tests and the broader existing suite before considering the change complete.
+
+## HTTP Routes
+
+- `/`: Browser chat console.
+- `/course-topics/`: Browser course studio.
+- `/api/chat/login/`: Username/password login that returns a token and creates a Django session.
+- `/api/chat/token/`: Issue or fetch the token for the current authenticated Django session.
+- `/api/chat/courses/`: List courses on `GET`; create a course with nested topics/question types/questions on `POST`.
+- `/api/chat/courses/<course_id>/questions/import/`: Import additional questions into an existing course.
+- `/api/chat/sessions/`: Create a new tutoring session for a course.
+- `/api/chat/sessions/<session_id>/`: Fetch session state, active question, and progress summaries.
+- `/api/chat/chat/`: Submit a learner message for hint, mark, or skip handling.
 
 ## Common Commands
 
