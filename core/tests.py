@@ -24,3 +24,4 @@ class HomePageTests(SimpleTestCase):
         self.assertContains(response, "Import Questions")
         self.assertContains(response, "Import Questions</button>")
         self.assertContains(response, "/api/chat/courses/")
+        self.assertContains(response, "let availableCourses = [];")

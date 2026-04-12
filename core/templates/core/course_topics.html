@@ -253,6 +253,7 @@
     const questionCourseSelect = document.getElementById("question-course-select");
     const questionCourseDetail = document.getElementById("question-course-detail");
     const courseList = document.getElementById("course-list");
+    let availableCourses = [];
 
     tokenField.value = localStorage.getItem(storageKey) || "";
 
@@ -348,8 +349,9 @@
             throw new Error("Provide a token first.");
         }
         const payload = await fetchJson(config.coursesUrl);
-        renderCourses(payload.courses || []);
-        setStatus(courseStatus, `Loaded ${payload.courses.length} course(s).`);
+        availableCourses = payload.courses || [];
+        renderCourses(availableCourses);
+        setStatus(courseStatus, `Loaded ${availableCourses.length} course(s).`);
     }
 
     async function createCourse() {
