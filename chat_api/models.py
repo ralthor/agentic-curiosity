@@ -86,6 +86,7 @@ class CourseQuestion(models.Model):
     question_text = models.TextField()
     max_marks = models.PositiveIntegerField()
     sample_answer = models.TextField(blank=True, default="")
+    example_answer = models.TextField(blank=True, default="")
     marking_notes = models.TextField(blank=True, default="")
     import_key = models.CharField(max_length=255, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)

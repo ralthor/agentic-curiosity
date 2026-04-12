@@ -181,6 +181,7 @@ class ChatApiTests(TestCase):
             question_text="What is 2 + 3?",
             max_marks=4,
             sample_answer="5",
+            example_answer="A full-mark answer is 5.",
             marking_notes="Award full marks for 5.",
         )
         self.q2 = CourseQuestion.objects.create(
@@ -190,6 +191,7 @@ class ChatApiTests(TestCase):
             question_text="What is 5 - 2?",
             max_marks=4,
             sample_answer="3",
+            example_answer="",
             marking_notes="Award full marks for 3.",
         )
 
@@ -236,6 +238,7 @@ class ChatApiTests(TestCase):
                         "question_type_import_key": "short",
                         "question_text": "Define speed.",
                         "max_marks": 4,
+                        "example_answer": "Speed is the distance travelled per unit time.",
                     }
                 ],
             },
@@ -247,6 +250,10 @@ class ChatApiTests(TestCase):
         self.assertEqual(course.topics.count(), 1)
         self.assertEqual(course.question_types.count(), 1)
         self.assertEqual(course.questions.count(), 1)
+        self.assertEqual(
+            course.questions.get(question_text="Define speed.").example_answer,
+            "Speed is the distance travelled per unit time.",
+        )
 
     def test_course_question_import_endpoint_adds_questions_to_existing_course(self):
         token = ApiToken.issue_for_user(self.user)
@@ -261,6 +268,7 @@ class ChatApiTests(TestCase):
                         "question_text": "What is 7 + 1?",
                         "max_marks": 4,
                         "sample_answer": "8",
+                        "example_answer": "A full-mark answer is 8.",
                         "marking_notes": "Award full marks for 8.",
                     },
                     {
@@ -281,6 +289,10 @@ class ChatApiTests(TestCase):
         self.assertEqual(self.course.questions.count(), 4)
         self.assertTrue(self.course.questions.filter(question_text="What is 7 + 1?").exists())
         self.assertTrue(self.course.questions.filter(question_text="What is 9 - 4?").exists())
+        self.assertEqual(
+            self.course.questions.get(question_text="What is 7 + 1?").example_answer,
+            "A full-mark answer is 8.",
+        )
 
     def test_course_question_import_endpoint_requires_at_least_one_question(self):
         token = ApiToken.issue_for_user(self.user)
@@ -317,6 +329,9 @@ class ChatApiTests(TestCase):
         self.assertIsNotNone(session.active_presentation)
         self.assertEqual(session.active_presentation.question, self.q1)
         self.assertEqual(response.json()["active_question"]["question_text"], self.q1.question_text)
+        self.assertTrue(response.json()["active_question"]["example_answer_available"])
+        self.assertFalse(response.json()["active_question"]["example_answer_unlocked"])
+        self.assertEqual(response.json()["active_question"]["example_answer"], "")
         state = LearnerQuestionState.objects.get(user_id=str(self.user.pk), course=self.course, question=self.q1)
         self.assertEqual(state.times_seen, 1)
 
@@ -383,6 +398,35 @@ class ChatApiTests(TestCase):
         state = LearnerQuestionState.objects.get(user_id=str(self.user.pk), course=self.course, question=self.q1)
         self.assertEqual(state.latest_leitner_score, 2)
         self.assertEqual(state.times_answered, 1)
+
+    def test_example_answer_unlocks_after_two_incomplete_answer_attempts(self):
+        token = ApiToken.issue_for_user(self.user)
+        session = create_session(user=self.user, course=self.course)
+
+        with patch("chat_api.services.OpenAIAgent") as agent_class:
+            agent_class.side_effect = [
+                RecordingAgent(response_text='{"awarded_marks": 1, "explanation": "Not enough detail."}'),
+                RecordingAgent(response_text='{"awarded_marks": 2, "explanation": "Closer, but still incomplete."}'),
+            ]
+
+            first_response = self._post_json(
+                "/api/chat/chat/",
+                {"session_id": session.pk, "text": "4"},
+                **self._authorization_header(token),
+            )
+            second_response = self._post_json(
+                "/api/chat/chat/",
+                {"session_id": session.pk, "text": "Still 4"},
+                **self._authorization_header(token),
+            )
+
+        self.assertEqual(first_response.status_code, 200)
+        self.assertFalse(first_response.json()["active_question"]["example_answer_unlocked"])
+        self.assertEqual(first_response.json()["active_question"]["example_answer"], "")
+        self.assertEqual(second_response.status_code, 200)
+        self.assertEqual(second_response.json()["active_question"]["incorrect_answer_attempt_count"], 2)
+        self.assertTrue(second_response.json()["active_question"]["example_answer_unlocked"])
+        self.assertEqual(second_response.json()["active_question"]["example_answer"], "A full-mark answer is 5.")
 
     def test_full_mark_answer_closes_question_and_advances(self):
         token = ApiToken.issue_for_user(self.user)

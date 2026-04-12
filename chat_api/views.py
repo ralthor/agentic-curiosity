@@ -229,6 +229,7 @@ def _create_questions_for_course(*, course: Course, questions_payload: list[dict
             question_text=_require_non_blank_string(question_payload, "question_text"),
             max_marks=max_marks,
             sample_answer=_optional_string(question_payload, "sample_answer"),
+            example_answer=_optional_string(question_payload, "example_answer"),
             marking_notes=_optional_string(question_payload, "marking_notes"),
             import_key=_optional_string(question_payload, "import_key"),
         )

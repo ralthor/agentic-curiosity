@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from ai_chat.models import LearnerQuestionState, QuestionPresentation
+from ai_chat.models import LearnerQuestionState, QuestionAttempt, QuestionPresentation
 
 from .models import Course
+
+EXAMPLE_ANSWER_UNLOCK_ATTEMPTS = 2
 
 
 def derive_leitner_score(*, awarded_marks: int, max_marks: int) -> int:
@@ -92,6 +94,15 @@ def serialize_active_question(presentation: QuestionPresentation | None) -> dict
     question = presentation.question
     topic = question.topic
     question_type = question.question_type
+    example_answer = question.example_answer.strip()
+    incorrect_answer_attempt_count = presentation.attempts.filter(
+        interaction_type=QuestionAttempt.InteractionType.ANSWER_ATTEMPT,
+        completed_presentation=False,
+    ).count()
+    example_answer_available = bool(example_answer)
+    example_answer_unlocked = (
+        example_answer_available and incorrect_answer_attempt_count >= EXAMPLE_ANSWER_UNLOCK_ATTEMPTS
+    )
     return {
         "presentation_id": presentation.pk,
         "question_id": question.pk,
@@ -100,6 +111,11 @@ def serialize_active_question(presentation: QuestionPresentation | None) -> dict
         "status": presentation.status,
         "selection_source": presentation.selection_source,
         "attempt_count": presentation.attempts.count(),
+        "incorrect_answer_attempt_count": incorrect_answer_attempt_count,
+        "example_answer_available": example_answer_available,
+        "example_answer_unlock_after_attempts": EXAMPLE_ANSWER_UNLOCK_ATTEMPTS,
+        "example_answer_unlocked": example_answer_unlocked,
+        "example_answer": example_answer if example_answer_unlocked else "",
         "topic": {
             "id": topic.pk,
             "name": topic.name,

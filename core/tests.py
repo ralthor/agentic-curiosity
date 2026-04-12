@@ -13,6 +13,10 @@ class HomePageTests(SimpleTestCase):
         self.assertContains(response, "/api/chat/courses/")
         self.assertContains(response, "/api/chat/sessions/")
         self.assertContains(response, "/api/chat/chat/")
+        self.assertContains(response, "Submit Answer")
+        self.assertContains(response, "Hint</button>")
+        self.assertContains(response, "Skip</button>")
+        self.assertContains(response, "Show Example Answer")
 
     def test_course_topics_page_renders_course_studio(self):
         response = self.client.get("/course-topics/")

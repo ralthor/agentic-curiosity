@@ -100,6 +100,13 @@
             color: var(--danger);
         }
 
+        .action-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 10px;
+            margin-top: 12px;
+        }
+
         .meta {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
@@ -117,6 +124,12 @@
         .card strong {
             display: block;
             margin-bottom: 6px;
+        }
+
+        .detail {
+            margin-top: 12px;
+            color: var(--muted);
+            line-height: 1.5;
         }
 
         .badge {
@@ -225,10 +238,20 @@
     <div class="grid">
         <section class="panel">
             <h2>Respond</h2>
-            <p>Ask for a hint, submit an answer, or say “skip” to move on.</p>
-            <label for="message">Message</label>
-            <textarea id="message" placeholder="Type an answer, ask for a hint, or say skip."></textarea>
-            <button id="send-button" type="button">Send</button>
+            <p>Type an answer below. Use the dedicated buttons for hint and skip actions.</p>
+            <label for="message">Answer</label>
+            <textarea id="message" placeholder="Type your answer here."></textarea>
+            <div class="action-row">
+                <button id="send-button" type="button">Submit Answer</button>
+                <button id="hint-button" type="button" class="secondary">Hint</button>
+                <button id="skip-button" type="button" class="secondary">Skip</button>
+                <button id="example-answer-button" type="button" class="secondary" hidden>Show Example Answer</button>
+            </div>
+            <div class="detail" id="example-answer-note">Example answers unlock after 2 incomplete answer attempts when one is stored for the current question.</div>
+            <div id="example-answer-card" class="card" hidden>
+                <strong>Example Answer</strong>
+                <pre id="example-answer-text"></pre>
+            </div>
             <div class="status" id="chat-status">Waiting for a session.</div>
         </section>
 
@@ -269,7 +292,9 @@
         token: localStorage.getItem(storageKeys.token) || "",
         sessionId: localStorage.getItem(storageKeys.sessionId) || "",
         courseId: localStorage.getItem(storageKeys.courseId) || "",
-        courseName: localStorage.getItem(storageKeys.courseName) || ""
+        courseName: localStorage.getItem(storageKeys.courseName) || "",
+        activeQuestion: null,
+        revealedExamplePresentationId: ""
     };
 
     const authStatus = document.getElementById("auth-status");
@@ -293,6 +318,12 @@
     const activeAttemptCount = document.getElementById("active-attempt-count");
     const activeSelectionSource = document.getElementById("active-selection-source");
     const messageField = document.getElementById("message");
+    const hintButton = document.getElementById("hint-button");
+    const skipButton = document.getElementById("skip-button");
+    const exampleAnswerButton = document.getElementById("example-answer-button");
+    const exampleAnswerNote = document.getElementById("example-answer-note");
+    const exampleAnswerCard = document.getElementById("example-answer-card");
+    const exampleAnswerText = document.getElementById("example-answer-text");
 
     let availableCourses = [];
 
@@ -313,6 +344,44 @@
         entry.className = "entry";
         entry.innerHTML = `<strong>${title}</strong><div>${body}</div>`;
         transcript.prepend(entry);
+    }
+
+    function renderExampleAnswer(activeQuestion) {
+        if (!activeQuestion) {
+            exampleAnswerButton.hidden = true;
+            exampleAnswerCard.hidden = true;
+            exampleAnswerText.textContent = "";
+            exampleAnswerNote.textContent = "Create a session to start answering questions.";
+            state.revealedExamplePresentationId = "";
+            return;
+        }
+
+        const presentationId = String(activeQuestion.presentation_id);
+        const hasExampleAnswer = Boolean(activeQuestion.example_answer_available);
+        const isUnlocked = Boolean(activeQuestion.example_answer_unlocked && activeQuestion.example_answer);
+        const isRevealed = isUnlocked && state.revealedExamplePresentationId === presentationId;
+        const unlockAfter = Number(activeQuestion.example_answer_unlock_after_attempts || 2);
+        const incorrectAttempts = Number(activeQuestion.incorrect_answer_attempt_count || 0);
+
+        exampleAnswerButton.hidden = !isUnlocked;
+        exampleAnswerButton.textContent = isRevealed ? "Hide Example Answer" : "Show Example Answer";
+        exampleAnswerCard.hidden = !isRevealed;
+        exampleAnswerText.textContent = isRevealed ? activeQuestion.example_answer : "";
+
+        if (!hasExampleAnswer) {
+            exampleAnswerNote.textContent = "No example answer is stored for this question yet.";
+            return;
+        }
+
+        if (isUnlocked) {
+            exampleAnswerNote.textContent = "Example answer unlocked for this question.";
+            return;
+        }
+
+        const remainingAttempts = Math.max(0, unlockAfter - incorrectAttempts);
+        exampleAnswerNote.textContent = remainingAttempts === 1
+            ? "Example answer unlocks after 1 more incomplete answer attempt."
+            : `Example answer unlocks after ${remainingAttempts} more incomplete answer attempts.`;
     }
 
     function renderCourses() {
@@ -336,6 +405,16 @@
         state.sessionId = payload.session_id ? String(payload.session_id) : "";
         state.courseId = payload.course ? String(payload.course.id) : "";
         state.courseName = payload.course ? payload.course.name : "";
+        state.activeQuestion = payload.active_question || null;
+        if (
+            state.revealedExamplePresentationId
+            && (
+                !state.activeQuestion
+                || String(state.activeQuestion.presentation_id) !== state.revealedExamplePresentationId
+            )
+        ) {
+            state.revealedExamplePresentationId = "";
+        }
         storeState();
 
         currentCourse.textContent = state.courseName || "none";
@@ -357,6 +436,8 @@
             activeQuestionCard.hidden = true;
             activeQuestionSummary.textContent = "No active question is available for this session.";
         }
+
+        renderExampleAnswer(state.activeQuestion);
 
         topicProgress.innerHTML = "";
         const rows = payload.topic_progress || [];
@@ -427,20 +508,18 @@
         appendEntry("Session", `Created session ${payload.session_id} for ${payload.course.name}.`);
     }
 
-    async function sendMessage() {
+    async function sendInteraction(text, { clearMessage = false } = {}) {
         if (!state.sessionId) {
             throw new Error("Create a session first.");
-        }
-        const text = messageField.value.trim();
-        if (!text) {
-            throw new Error("Type a message first.");
         }
         const payload = await fetchJson(config.chatUrl, {
             method: "POST",
             body: JSON.stringify({ session_id: Number(state.sessionId), text })
         });
         renderSession(payload);
-        messageField.value = "";
+        if (clearMessage) {
+            messageField.value = "";
+        }
         const extras = [];
         if (payload.awarded_marks !== null && payload.awarded_marks !== undefined) {
             extras.push(`Marks: ${payload.awarded_marks}`);
@@ -456,6 +535,32 @@
             `${payload.message}${extras.length ? `<div style="margin-top:6px; color:#6d6257;">${extras.join(" | ")}</div>` : ""}`
         );
         setStatus(chatStatus, `Handled ${payload.interaction_type}.`);
+    }
+
+    async function sendMessage() {
+        const text = messageField.value.trim();
+        if (!text) {
+            throw new Error("Type an answer first.");
+        }
+        await sendInteraction(text, { clearMessage: true });
+    }
+
+    async function requestHint() {
+        await sendInteraction("hint");
+    }
+
+    async function skipQuestion() {
+        await sendInteraction("skip");
+    }
+
+    function toggleExampleAnswer() {
+        if (!state.activeQuestion || !state.activeQuestion.example_answer_unlocked || !state.activeQuestion.example_answer) {
+            return;
+        }
+
+        const presentationId = String(state.activeQuestion.presentation_id);
+        state.revealedExamplePresentationId = state.revealedExamplePresentationId === presentationId ? "" : presentationId;
+        renderExampleAnswer(state.activeQuestion);
     }
 
     document.getElementById("login-button").addEventListener("click", () => {
@@ -474,9 +579,21 @@
     });
 
     document.getElementById("send-button").addEventListener("click", () => {
-        setStatus(chatStatus, "Sending...");
+        setStatus(chatStatus, "Sending answer...");
         sendMessage().catch((error) => setStatus(chatStatus, error.message, true));
     });
+
+    hintButton.addEventListener("click", () => {
+        setStatus(chatStatus, "Requesting hint...");
+        requestHint().catch((error) => setStatus(chatStatus, error.message, true));
+    });
+
+    skipButton.addEventListener("click", () => {
+        setStatus(chatStatus, "Skipping question...");
+        skipQuestion().catch((error) => setStatus(chatStatus, error.message, true));
+    });
+
+    exampleAnswerButton.addEventListener("click", toggleExampleAnswer);
 
     courseSelect.addEventListener("change", () => {
         const selected = availableCourses.find((course) => String(course.id) === courseSelect.value) || null;
@@ -488,6 +605,8 @@
     if (state.token) {
         loadCourses().catch((error) => setStatus(authStatus, error.message, true));
     }
+
+    renderExampleAnswer(null);
 </script>
 </body>
 </html>

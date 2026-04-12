@@ -50,7 +50,7 @@ class QuestionTypeAdmin(admin.ModelAdmin):
 class CourseQuestionAdmin(admin.ModelAdmin):
     list_display = ("id", "course", "topic", "question_type", "max_marks", "created_at")
     list_select_related = ("course", "topic", "question_type")
-    search_fields = ("question_text", "sample_answer", "marking_notes", "import_key")
+    search_fields = ("question_text", "sample_answer", "example_answer", "marking_notes", "import_key")
     ordering = ("course__name", "topic__name", "id")
 
 

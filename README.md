@@ -9,7 +9,7 @@ The active runtime is centered on a question bank, not a free-form conversation 
 - `Course` is the top-level teaching unit.
 - `CourseTopic` groups questions for coverage and mastery reporting.
 - `QuestionType` stores the reusable `hint_prompt` and `mark_prompt` for one question format within a course.
-- `CourseQuestion` stores authored question text, `max_marks`, and optional `sample_answer` / `marking_notes`.
+- `CourseQuestion` stores authored question text, `max_marks`, and optional `sample_answer` / `example_answer` / `marking_notes`.
 - `ChatSession` tracks one learner's run through a course.
 - `QuestionPresentation` stores the currently served question and how it was selected.
 - `QuestionAttempt` stores each hint request, answer attempt, or skip action.
@@ -75,6 +75,8 @@ Each interaction is scoped to one active question.
 6. The app stores a `QuestionAttempt`.
 7. The app updates `LearnerQuestionState`.
 8. If the question is completed or skipped, the selector assigns the next question without a separate model call.
+
+If a question has an `example_answer`, the browser UI unlocks a reveal button after two incomplete answer attempts on that presentation.
 
 No full conversation transcript is sent back to the model.
 
@@ -196,6 +198,7 @@ curl -X POST http://127.0.0.1:8000/api/chat/chat/ \
       "question_text": "Define speed in one sentence.",
       "max_marks": 4,
       "sample_answer": "Speed is distance travelled per unit time.",
+      "example_answer": "Speed is the distance travelled per unit time.",
       "marking_notes": "Accept equivalent concise definitions."
     }
   ]
@@ -217,6 +220,7 @@ The import logic resolves question references by topic or question-type id, impo
       "question_text": "What unit is speed usually measured in?",
       "max_marks": 4,
       "sample_answer": "Metres per second (m/s).",
+      "example_answer": "A full-mark answer would be: speed is usually measured in metres per second, written as m/s.",
       "marking_notes": "Accept metres per second or m s^-1."
     }
   ]
@@ -231,6 +235,7 @@ The browser UI is intentionally thin and calls the JSON API directly.
 
 - The home page stores the token, selected course, and session id in `localStorage`.
 - The home page shows the current active question, attempt count, selection source, and topic progress.
+- The home page provides dedicated `Hint` and `Skip` buttons, plus a conditional example-answer reveal button when the current question has one and the learner has made two incomplete answer attempts.
 - The course studio can either use a token from the JSON login flow or call `/api/chat/token/` when the browser already has an authenticated Django session.
 - The course studio lists stored courses and their topic/question-type import keys to make follow-up question imports easier.
 
