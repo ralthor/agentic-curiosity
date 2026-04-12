@@ -16,7 +16,7 @@ class HomePageTests(SimpleTestCase):
         self.assertContains(response, "Submit Answer")
         self.assertContains(response, "Hint</button>")
         self.assertContains(response, "Skip</button>")
-        self.assertContains(response, "Show Example Answer")
+        self.assertContains(response, "Full Answer</button>")
         self.assertContains(response, "marked.min.js")
         self.assertContains(response, "renderMarkdown")
 

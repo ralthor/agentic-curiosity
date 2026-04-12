@@ -10,7 +10,7 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
-from ai_chat.models import ChatSession
+from ai_chat.models import ChatSession, QuestionAttempt
 
 from .auth import get_user_from_authorization_header
 from .models import ApiToken, Course, CourseQuestion, CourseTopic, QuestionType
@@ -56,6 +56,21 @@ def _parse_positive_int(raw_value) -> int | None:
         if parsed > 0:
             return parsed
     return None
+
+
+def _resolve_interaction_type_override(action: str) -> str | None:
+    normalized = action.strip().lower()
+    if not normalized:
+        return None
+
+    mapping = {
+        "answer": QuestionAttempt.InteractionType.ANSWER_ATTEMPT,
+        "hint": QuestionAttempt.InteractionType.HINT_REQUEST,
+        "skip": QuestionAttempt.InteractionType.SKIP,
+        "full_answer": QuestionAttempt.InteractionType.FULL_ANSWER_REQUEST,
+        "example_answer": QuestionAttempt.InteractionType.FULL_ANSWER_REQUEST,
+    }
+    return mapping.get(normalized)
 
 
 def _require_non_blank_string(payload: dict, field_name: str) -> str:
@@ -420,12 +435,23 @@ def chat_view(request):
     if session_id is None:
         return _json_error("session_id must be a positive integer.", status=400)
 
+    interaction_type_override = _resolve_interaction_type_override(_optional_string(payload, "action"))
+    if payload.get("action") not in (None, "") and interaction_type_override is None:
+        return _json_error("action must be one of answer, hint, skip, full_answer, or example_answer.", status=400)
+
     text = payload.get("text")
-    if not isinstance(text, str) or not text.strip():
+    if not isinstance(text, str):
+        text = ""
+    if interaction_type_override in (None, QuestionAttempt.InteractionType.ANSWER_ATTEMPT) and not text.strip():
         return _json_error("text must not be blank.", status=400)
 
     try:
-        session, interaction_result = interact_with_session(user=user, session_id=session_id, text=text)
+        session, interaction_result = interact_with_session(
+            user=user,
+            session_id=session_id,
+            text=text,
+            interaction_type_override=interaction_type_override,
+        )
     except ChatSession.DoesNotExist:
         return _json_error("Session not found.", status=404)
     except ValueError as exc:

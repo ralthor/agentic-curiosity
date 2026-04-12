@@ -76,7 +76,7 @@ Each interaction is scoped to one active question.
 7. The app updates `LearnerQuestionState`.
 8. If the question is completed or skipped, the selector assigns the next question without a separate model call.
 
-If a question has an `example_answer`, the browser UI unlocks a reveal button after two incomplete answer attempts on that presentation.
+The browser UI provides a `Full Answer` button for the active question. If `example_answer` is stored on the question, that authored answer is returned; otherwise the app asks the model for a full-mark answer using the question text, hint prompt, mark prompt, sample answer, marking notes, and recent attempts, then caches it back onto the question prefixed with `AI generated: `.
 
 No full conversation transcript is sent back to the model.
 
@@ -235,7 +235,9 @@ The browser UI is intentionally thin and calls the JSON API directly.
 
 - The home page stores the token, selected course, and session id in `localStorage`.
 - The home page shows the current active question, attempt count, selection source, and topic progress.
-- The home page provides dedicated `Hint` and `Skip` buttons, plus a conditional example-answer reveal button when the current question has one and the learner has made two incomplete answer attempts.
+- The home page provides dedicated `Hint`, `Skip`, and `Full Answer` buttons.
+- Clicking `Full Answer` logs a question attempt and either returns the stored `example_answer` or generates a full-mark answer with the model when the field is blank.
+- AI-generated full answers are cached onto `CourseQuestion.example_answer` with the prefix `AI generated: ` so later requests reuse the stored answer.
 - The course studio can either use a token from the JSON login flow or call `/api/chat/token/` when the browser already has an authenticated Django session.
 - The course studio lists stored courses and their topic/question-type import keys to make follow-up question imports easier.
 

@@ -329,9 +329,6 @@ class ChatApiTests(TestCase):
         self.assertIsNotNone(session.active_presentation)
         self.assertEqual(session.active_presentation.question, self.q1)
         self.assertEqual(response.json()["active_question"]["question_text"], self.q1.question_text)
-        self.assertTrue(response.json()["active_question"]["example_answer_available"])
-        self.assertFalse(response.json()["active_question"]["example_answer_unlocked"])
-        self.assertEqual(response.json()["active_question"]["example_answer"], "")
         state = LearnerQuestionState.objects.get(user_id=str(self.user.pk), course=self.course, question=self.q1)
         self.assertEqual(state.times_seen, 1)
 
@@ -399,34 +396,67 @@ class ChatApiTests(TestCase):
         self.assertEqual(state.latest_leitner_score, 2)
         self.assertEqual(state.times_answered, 1)
 
-    def test_example_answer_unlocks_after_two_incomplete_answer_attempts(self):
+    def test_full_answer_uses_stored_example_answer_and_logs_attempt(self):
+        token = ApiToken.issue_for_user(self.user)
+        session = create_session(user=self.user, course=self.course)
+
+        with patch("chat_api.services.OpenAIAgent") as agent_class:
+            response = self._post_json(
+                "/api/chat/chat/",
+                {"session_id": session.pk, "action": "full_answer"},
+                **self._authorization_header(token),
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["interaction_type"], "full_answer_request")
+        self.assertEqual(response.json()["message"], "A full-mark answer is 5.")
+        self.assertFalse(response.json()["completed_presentation"])
+        self.assertEqual(agent_class.call_count, 0)
+        attempt = QuestionAttempt.objects.get(presentation=session.active_presentation)
+        self.assertEqual(attempt.interaction_type, QuestionAttempt.InteractionType.FULL_ANSWER_REQUEST)
+        self.assertEqual(attempt.model_response_text, "A full-mark answer is 5.")
+        state = LearnerQuestionState.objects.get(user_id=str(self.user.pk), course=self.course, question=self.q1)
+        self.assertEqual(state.times_answered, 0)
+
+    def test_full_answer_uses_ai_when_stored_example_answer_is_blank(self):
         token = ApiToken.issue_for_user(self.user)
         session = create_session(user=self.user, course=self.course)
 
         with patch("chat_api.services.OpenAIAgent") as agent_class:
             agent_class.side_effect = [
-                RecordingAgent(response_text='{"awarded_marks": 1, "explanation": "Not enough detail."}'),
-                RecordingAgent(response_text='{"awarded_marks": 2, "explanation": "Closer, but still incomplete."}'),
+                RecordingAgent(response_text='{"awarded_marks": 4, "explanation": "Correct."}'),
+                RecordingAgent(response_text="A full-mark answer is 3."),
             ]
 
-            first_response = self._post_json(
+            answer_response = self._post_json(
                 "/api/chat/chat/",
-                {"session_id": session.pk, "text": "4"},
+                {"session_id": session.pk, "text": "5"},
                 **self._authorization_header(token),
             )
-            second_response = self._post_json(
+            response = self._post_json(
                 "/api/chat/chat/",
-                {"session_id": session.pk, "text": "Still 4"},
+                {"session_id": session.pk, "action": "full_answer"},
+                **self._authorization_header(token),
+            )
+            cached_response = self._post_json(
+                "/api/chat/chat/",
+                {"session_id": session.pk, "action": "full_answer"},
                 **self._authorization_header(token),
             )
 
-        self.assertEqual(first_response.status_code, 200)
-        self.assertFalse(first_response.json()["active_question"]["example_answer_unlocked"])
-        self.assertEqual(first_response.json()["active_question"]["example_answer"], "")
-        self.assertEqual(second_response.status_code, 200)
-        self.assertEqual(second_response.json()["active_question"]["incorrect_answer_attempt_count"], 2)
-        self.assertTrue(second_response.json()["active_question"]["example_answer_unlocked"])
-        self.assertEqual(second_response.json()["active_question"]["example_answer"], "A full-mark answer is 5.")
+        self.assertEqual(answer_response.status_code, 200)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(cached_response.status_code, 200)
+        self.assertEqual(response.json()["interaction_type"], "full_answer_request")
+        self.assertEqual(response.json()["message"], "AI generated: A full-mark answer is 3.")
+        self.assertEqual(cached_response.json()["message"], "AI generated: A full-mark answer is 3.")
+        self.assertEqual(agent_class.call_count, 2)
+        session.refresh_from_db()
+        self.q2.refresh_from_db()
+        self.assertEqual(self.q2.example_answer, "AI generated: A full-mark answer is 3.")
+        latest_attempt = QuestionAttempt.objects.filter(presentation=session.active_presentation).latest("created_at", "id")
+        self.assertEqual(latest_attempt.interaction_type, QuestionAttempt.InteractionType.FULL_ANSWER_REQUEST)
+        self.assertEqual(latest_attempt.model_response_text, "AI generated: A full-mark answer is 3.")
 
     def test_full_mark_answer_closes_question_and_advances(self):
         token = ApiToken.issue_for_user(self.user)

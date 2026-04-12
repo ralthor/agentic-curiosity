@@ -74,6 +74,7 @@ class QuestionAttempt(models.Model):
         HINT_REQUEST = "hint_request", "Hint Request"
         ANSWER_ATTEMPT = "answer_attempt", "Answer Attempt"
         SKIP = "skip", "Skip"
+        FULL_ANSWER_REQUEST = "full_answer_request", "Full Answer Request"
 
     presentation = models.ForeignKey(
         QuestionPresentation,

@@ -246,19 +246,14 @@
     <div class="grid">
         <section class="panel">
             <h2>Respond</h2>
-            <p>Type an answer below. Use the dedicated buttons for hint and skip actions.</p>
+            <p>Type an answer below. Use the dedicated buttons for hint, skip, and full-answer actions.</p>
             <label for="message">Answer</label>
             <textarea id="message" placeholder="Type your answer here."></textarea>
             <div class="action-row">
                 <button id="send-button" type="button">Submit Answer</button>
                 <button id="hint-button" type="button" class="secondary">Hint</button>
                 <button id="skip-button" type="button" class="secondary">Skip</button>
-                <button id="example-answer-button" type="button" class="secondary" hidden>Show Example Answer</button>
-            </div>
-            <div class="detail" id="example-answer-note">Example answers unlock after 2 incomplete answer attempts when one is stored for the current question.</div>
-            <div id="example-answer-card" class="card" hidden>
-                <strong>Example Answer</strong>
-                <div id="example-answer-text" class="markdown-content"></div>
+                <button id="full-answer-button" type="button" class="secondary">Full Answer</button>
             </div>
             <div class="status" id="chat-status">Waiting for a session.</div>
         </section>
@@ -309,8 +304,7 @@
         sessionId: localStorage.getItem(storageKeys.sessionId) || "",
         courseId: localStorage.getItem(storageKeys.courseId) || "",
         courseName: localStorage.getItem(storageKeys.courseName) || "",
-        activeQuestion: null,
-        revealedExamplePresentationId: ""
+        activeQuestion: null
     };
 
     const authStatus = document.getElementById("auth-status");
@@ -334,12 +328,10 @@
     const activeAttemptCount = document.getElementById("active-attempt-count");
     const activeSelectionSource = document.getElementById("active-selection-source");
     const messageField = document.getElementById("message");
+    const sendButton = document.getElementById("send-button");
     const hintButton = document.getElementById("hint-button");
     const skipButton = document.getElementById("skip-button");
-    const exampleAnswerButton = document.getElementById("example-answer-button");
-    const exampleAnswerNote = document.getElementById("example-answer-note");
-    const exampleAnswerCard = document.getElementById("example-answer-card");
-    const exampleAnswerText = document.getElementById("example-answer-text");
+    const fullAnswerButton = document.getElementById("full-answer-button");
 
     let availableCourses = [];
 
@@ -385,42 +377,14 @@
         return `<p>${escapeHtml(text).replaceAll("\n", "<br>")}</p>`;
     }
 
-    function renderExampleAnswer(activeQuestion) {
-        if (!activeQuestion) {
-            exampleAnswerButton.hidden = true;
-            exampleAnswerCard.hidden = true;
-            exampleAnswerText.innerHTML = "";
-            exampleAnswerNote.textContent = "Create a session to start answering questions.";
-            state.revealedExamplePresentationId = "";
-            return;
-        }
-
-        const presentationId = String(activeQuestion.presentation_id);
-        const hasExampleAnswer = Boolean(activeQuestion.example_answer_available);
-        const isUnlocked = Boolean(activeQuestion.example_answer_unlocked && activeQuestion.example_answer);
-        const isRevealed = isUnlocked && state.revealedExamplePresentationId === presentationId;
-        const unlockAfter = Number(activeQuestion.example_answer_unlock_after_attempts || 2);
-        const incorrectAttempts = Number(activeQuestion.incorrect_answer_attempt_count || 0);
-
-        exampleAnswerButton.hidden = !isUnlocked;
-        exampleAnswerButton.textContent = isRevealed ? "Hide Example Answer" : "Show Example Answer";
-        exampleAnswerCard.hidden = !isRevealed;
-        exampleAnswerText.innerHTML = isRevealed ? renderMarkdown(activeQuestion.example_answer) : "";
-
-        if (!hasExampleAnswer) {
-            exampleAnswerNote.textContent = "No example answer is stored for this question yet.";
-            return;
-        }
-
-        if (isUnlocked) {
-            exampleAnswerNote.textContent = "Example answer unlocked for this question.";
-            return;
-        }
-
-        const remainingAttempts = Math.max(0, unlockAfter - incorrectAttempts);
-        exampleAnswerNote.textContent = remainingAttempts === 1
-            ? "Example answer unlocks after 1 more incomplete answer attempt."
-            : `Example answer unlocks after ${remainingAttempts} more incomplete answer attempts.`;
+    function formatInteractionTitle(interactionType) {
+        const titles = {
+            answer_attempt: "Answer",
+            hint_request: "Hint",
+            skip: "Skip",
+            full_answer_request: "Full Answer"
+        };
+        return titles[interactionType] || interactionType;
     }
 
     function renderCourses() {
@@ -445,15 +409,6 @@
         state.courseId = payload.course ? String(payload.course.id) : "";
         state.courseName = payload.course ? payload.course.name : "";
         state.activeQuestion = payload.active_question || null;
-        if (
-            state.revealedExamplePresentationId
-            && (
-                !state.activeQuestion
-                || String(state.activeQuestion.presentation_id) !== state.revealedExamplePresentationId
-            )
-        ) {
-            state.revealedExamplePresentationId = "";
-        }
         storeState();
 
         currentCourse.textContent = state.courseName || "none";
@@ -475,8 +430,10 @@
             activeQuestionCard.hidden = true;
             activeQuestionSummary.textContent = "No active question is available for this session.";
         }
-
-        renderExampleAnswer(state.activeQuestion);
+        sendButton.disabled = !payload.active_question;
+        fullAnswerButton.disabled = !payload.active_question;
+        hintButton.disabled = !payload.active_question;
+        skipButton.disabled = !payload.active_question;
 
         topicProgress.innerHTML = "";
         const rows = payload.topic_progress || [];
@@ -547,13 +504,20 @@
         appendEntry("Session", `Created session ${payload.session_id} for ${payload.course.name}.`);
     }
 
-    async function sendInteraction(text, { clearMessage = false } = {}) {
+    async function sendInteraction({ text = "", action = "", clearMessage = false } = {}) {
         if (!state.sessionId) {
             throw new Error("Create a session first.");
         }
+        const requestBody = { session_id: Number(state.sessionId) };
+        if (action) {
+            requestBody.action = action;
+        }
+        if (text || !action || action === "answer") {
+            requestBody.text = text;
+        }
         const payload = await fetchJson(config.chatUrl, {
             method: "POST",
-            body: JSON.stringify({ session_id: Number(state.sessionId), text })
+            body: JSON.stringify(requestBody)
         });
         renderSession(payload);
         if (clearMessage) {
@@ -570,7 +534,7 @@
             extras.push("Question closed");
         }
         appendEntry(
-            payload.interaction_type,
+            formatInteractionTitle(payload.interaction_type),
             `${payload.message}${extras.length ? `\n\n${extras.join(" | ")}` : ""}`
         );
         setStatus(chatStatus, `Handled ${payload.interaction_type}.`);
@@ -581,25 +545,19 @@
         if (!text) {
             throw new Error("Type an answer first.");
         }
-        await sendInteraction(text, { clearMessage: true });
+        await sendInteraction({ text, action: "answer", clearMessage: true });
     }
 
     async function requestHint() {
-        await sendInteraction("hint");
+        await sendInteraction({ action: "hint" });
     }
 
     async function skipQuestion() {
-        await sendInteraction("skip");
+        await sendInteraction({ action: "skip" });
     }
 
-    function toggleExampleAnswer() {
-        if (!state.activeQuestion || !state.activeQuestion.example_answer_unlocked || !state.activeQuestion.example_answer) {
-            return;
-        }
-
-        const presentationId = String(state.activeQuestion.presentation_id);
-        state.revealedExamplePresentationId = state.revealedExamplePresentationId === presentationId ? "" : presentationId;
-        renderExampleAnswer(state.activeQuestion);
+    async function requestFullAnswer() {
+        await sendInteraction({ action: "full_answer" });
     }
 
     document.getElementById("login-button").addEventListener("click", () => {
@@ -632,7 +590,10 @@
         skipQuestion().catch((error) => setStatus(chatStatus, error.message, true));
     });
 
-    exampleAnswerButton.addEventListener("click", toggleExampleAnswer);
+    fullAnswerButton.addEventListener("click", () => {
+        setStatus(chatStatus, "Getting full answer...");
+        requestFullAnswer().catch((error) => setStatus(chatStatus, error.message, true));
+    });
 
     courseSelect.addEventListener("change", () => {
         const selected = availableCourses.find((course) => String(course.id) === courseSelect.value) || null;
@@ -644,8 +605,10 @@
     if (state.token) {
         loadCourses().catch((error) => setStatus(authStatus, error.message, true));
     }
-
-    renderExampleAnswer(null);
+    sendButton.disabled = true;
+    hintButton.disabled = true;
+    skipButton.disabled = true;
+    fullAnswerButton.disabled = true;
 </script>
 </body>
 </html>

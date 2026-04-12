@@ -21,6 +21,12 @@ _HINT_RE = re.compile(
     r"^(hint|help|explain|show|what|how|why|can|could|i don't understand|i do not understand|give me a clue)\b",
     re.IGNORECASE,
 )
+_FULL_ANSWER_SYSTEM_PROMPT = (
+    "You write high-quality model answers for assessed questions. "
+    "Return only the full-mark answer in Markdown. "
+    "Do not mention marks, grading, rubrics, or that you are writing an example answer."
+)
+_AI_GENERATED_EXAMPLE_ANSWER_PREFIX = "AI generated: "
 
 
 @dataclass(frozen=True)
@@ -85,10 +91,18 @@ def create_session(
     return get_session(user=user, session_id=session.pk)
 
 
-def interact_with_session(*, user, session_id: int, text: str) -> tuple[ChatSession, InteractionResult]:
+def interact_with_session(
+    *,
+    user,
+    session_id: int,
+    text: str = "",
+    interaction_type_override: str | None = None,
+) -> tuple[ChatSession, InteractionResult]:
     cleaned_text = text.strip()
-    if not cleaned_text:
+    interaction_type = interaction_type_override or classify_interaction(cleaned_text)
+    if interaction_type == QuestionAttempt.InteractionType.ANSWER_ATTEMPT and not cleaned_text:
         raise ValueError("text must not be blank.")
+    student_message = cleaned_text or _default_student_message(interaction_type)
 
     with transaction.atomic():
         session = _session_queryset().select_for_update().get(pk=session_id, user_id=str(user.pk))
@@ -100,13 +114,18 @@ def interact_with_session(*, user, session_id: int, text: str) -> tuple[ChatSess
             session = _session_queryset().select_for_update().get(pk=session_id, user_id=str(user.pk))
             presentation = session.active_presentation
 
-        interaction_type = classify_interaction(cleaned_text)
         if interaction_type == QuestionAttempt.InteractionType.HINT_REQUEST:
-            result = _handle_hint_request(session=session, presentation=presentation, student_message=cleaned_text)
+            result = _handle_hint_request(session=session, presentation=presentation, student_message=student_message)
         elif interaction_type == QuestionAttempt.InteractionType.SKIP:
-            result = _handle_skip(session=session, presentation=presentation, student_message=cleaned_text)
+            result = _handle_skip(session=session, presentation=presentation, student_message=student_message)
+        elif interaction_type == QuestionAttempt.InteractionType.FULL_ANSWER_REQUEST:
+            result = _handle_full_answer_request(
+                session=session,
+                presentation=presentation,
+                student_message=student_message,
+            )
         else:
-            result = _handle_answer_attempt(session=session, presentation=presentation, student_message=cleaned_text)
+            result = _handle_answer_attempt(session=session, presentation=presentation, student_message=student_message)
 
         ChatSession.objects.filter(pk=session.pk).update(updated_at=timezone.now())
 
@@ -120,6 +139,16 @@ def classify_interaction(text: str) -> str:
     if "?" in stripped or _HINT_RE.search(stripped):
         return QuestionAttempt.InteractionType.HINT_REQUEST
     return QuestionAttempt.InteractionType.ANSWER_ATTEMPT
+
+
+def _default_student_message(interaction_type: str) -> str:
+    if interaction_type == QuestionAttempt.InteractionType.HINT_REQUEST:
+        return "Hint requested."
+    if interaction_type == QuestionAttempt.InteractionType.SKIP:
+        return "Skip requested."
+    if interaction_type == QuestionAttempt.InteractionType.FULL_ANSWER_REQUEST:
+        return "Full answer requested."
+    return ""
 
 
 def _handle_hint_request(*, session: ChatSession, presentation: QuestionPresentation, student_message: str) -> InteractionResult:
@@ -228,6 +257,49 @@ def _handle_skip(*, session: ChatSession, presentation: QuestionPresentation, st
         awarded_marks=None,
         derived_leitner_score=None,
         completed_presentation=True,
+    )
+
+
+def _handle_full_answer_request(
+    *,
+    session: ChatSession,
+    presentation: QuestionPresentation,
+    student_message: str,
+) -> InteractionResult:
+    question = presentation.question
+    prior_attempts = _recent_attempts(presentation)
+    response_text = (question.example_answer or "").strip()
+    if not response_text:
+        agent = OpenAIAgent(
+            system=_FULL_ANSWER_SYSTEM_PROMPT,
+            request_defaults={"model": _resolve_agent_model()},
+        )
+        response_text = agent.ask(
+            text=_build_full_answer_prompt(
+                session=session,
+                presentation=presentation,
+                prior_attempts=prior_attempts,
+            ),
+            user=session.user_id,
+        ).strip()
+        if response_text:
+            response_text = _format_ai_generated_example_answer(response_text)
+            question.example_answer = response_text
+            question.save(update_fields=["example_answer", "updated_at"])
+    response_text = response_text or "I could not generate a full-mark answer for this question."
+    QuestionAttempt.objects.create(
+        presentation=presentation,
+        interaction_type=QuestionAttempt.InteractionType.FULL_ANSWER_REQUEST,
+        student_message=student_message,
+        model_response_text=response_text,
+        completed_presentation=False,
+    )
+    return InteractionResult(
+        interaction_type=QuestionAttempt.InteractionType.FULL_ANSWER_REQUEST,
+        message=response_text,
+        awarded_marks=None,
+        derived_leitner_score=None,
+        completed_presentation=False,
     )
 
 
@@ -397,6 +469,42 @@ def _build_mark_prompt(
     sections.append(f"Latest student answer:\n{student_message}")
     sections.append('Return only valid JSON in the shape {"awarded_marks": 0, "explanation": "..."} .')
     return "\n\n".join(sections)
+
+
+def _build_full_answer_prompt(
+    *,
+    session: ChatSession,
+    presentation: QuestionPresentation,
+    prior_attempts: list[QuestionAttempt],
+) -> str:
+    question = presentation.question
+    sections = [
+        f"Course: {session.course.name}",
+        f"Topic: {question.topic.name}",
+        f"Question type: {question.question_type.name}",
+        f"Question:\n{question.question_text}",
+        f"Maximum marks: {question.max_marks}",
+        f"Hint prompt for this question type:\n{question.question_type.hint_prompt}",
+        f"Mark prompt for this question type:\n{question.question_type.mark_prompt}",
+    ]
+    if question.sample_answer:
+        sections.append(f"Stored sample answer:\n{question.sample_answer}")
+    if question.marking_notes:
+        sections.append(f"Marking notes:\n{question.marking_notes}")
+    sections.append(f"Prior attempts on this question:\n{_render_attempts(prior_attempts)}")
+    sections.append(
+        "Write one answer that would receive full marks for this exact question. "
+        "Be complete, concise, and directly usable by the learner. "
+        "Use Markdown when it helps the structure, but do not wrap the answer in code fences."
+    )
+    return "\n\n".join(sections)
+
+
+def _format_ai_generated_example_answer(response_text: str) -> str:
+    normalized = response_text.strip()
+    if normalized.startswith(_AI_GENERATED_EXAMPLE_ANSWER_PREFIX):
+        return normalized
+    return f"{_AI_GENERATED_EXAMPLE_ANSWER_PREFIX}{normalized}"
 
 
 def _render_attempts(prior_attempts: list[QuestionAttempt]) -> str:
