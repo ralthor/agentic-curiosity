@@ -20,6 +20,13 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 load_env_file(BASE_DIR / '.env')
 
 
+def resolve_sqlite_database_name(base_dir: Path) -> Path:
+    configured_path = os.environ.get('DJANGO_DB_PATH', '').strip()
+    if configured_path:
+        return Path(configured_path).expanduser()
+    return base_dir / 'db.sqlite3'
+
+
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
@@ -97,7 +104,7 @@ WSGI_APPLICATION = 'agentic_curiosity.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'NAME': resolve_sqlite_database_name(BASE_DIR),
     }
 }
 

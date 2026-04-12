@@ -1,0 +1,9 @@
+.git
+.github
+.venv
+.codex
+__pycache__/
+*.py[cod]
+*.sqlite3
+.env
+docker-data/

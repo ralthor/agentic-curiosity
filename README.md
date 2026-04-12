@@ -48,6 +48,149 @@ uv run python manage.py runserver
 
 The login and token endpoints expect an existing Django user, so create a user first with `createsuperuser` or through admin.
 
+## Docker
+
+Run the app with Docker Compose:
+
+```bash
+docker compose up --build
+```
+
+This uses [compose.yml](compose.yml) and stores the SQLite database on the host at `./docker-data/db.sqlite3` by bind-mounting `./docker-data` into the container as `/data`.
+
+The container startup script runs `python manage.py migrate` automatically before `runserver`, so the mounted database is initialized on first boot.
+
+If you want to run without Compose, mount a host directory and point Django at it explicitly:
+
+```bash
+docker build -t agentic-curiosity .
+docker run --rm -it -p 8000:8000 --env-file .env -e DJANGO_DB_PATH=/data/db.sqlite3 -v ./docker-data:/data agentic-curiosity
+```
+
+The image still runs `python manage.py runserver 0.0.0.0:8000`, which is fine for simple testing and CI but is not a hardened production web stack.
+
+### Server Deployment With Docker
+
+If your GitHub workflow is publishing the image to Docker Hub, the simplest server deployment is to pull that image on the server and run it with Docker Compose. You do not need to clone this repo on the server just to run the app.
+
+Example server layout:
+
+```text
+/opt/agentic-curiosity/
+  compose.yml
+  .env
+  docker-data/
+```
+
+Create `/opt/agentic-curiosity/compose.yml` on the server with:
+
+```yaml
+services:
+  web:
+    image: YOUR_DOCKERHUB_USERNAME/agentic-curiosity:latest
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      DJANGO_DB_PATH: /data/db.sqlite3
+    volumes:
+      - ./docker-data:/data
+```
+
+If you plan to put the app behind Nginx on the same machine, bind it only to localhost instead:
+
+```yaml
+ports:
+  - "127.0.0.1:8000:8000"
+```
+
+Create `/opt/agentic-curiosity/.env` on the server with at least:
+
+```env
+DJANGO_SECRET_KEY=replace-this-with-a-long-random-secret
+DJANGO_DEBUG=False
+DJANGO_ALLOWED_HOSTS=your-domain.example,www.your-domain.example,SERVER_PUBLIC_IP
+
+OPENAI_API_KEY=your-openai-api-key
+AI_CHAT_ANSWERER_MODEL=gpt-5.4-mini
+AI_CHAT_MODEL=gpt-5.4-mini
+```
+
+Notes on the server `.env`:
+
+- `DJANGO_ALLOWED_HOSTS` must include every hostname and public IP you will use to access the app.
+- If you are using a reverse proxy, include the real public domain names there.
+- Keep `.env` out of git and lock it down on the server with `chmod 600 /opt/agentic-curiosity/.env`.
+- The SQLite database will be stored persistently on the host at `/opt/agentic-curiosity/docker-data/db.sqlite3`.
+
+Bring the app up with:
+
+```bash
+cd /opt/agentic-curiosity
+docker compose pull
+docker compose up -d
+```
+
+On first boot, the container runs `python manage.py migrate` automatically before starting Django, so the mounted SQLite database is initialized without a separate migration command.
+
+Create the admin user once after the container is running:
+
+```bash
+cd /opt/agentic-curiosity
+docker compose exec web uv run python manage.py createsuperuser
+```
+
+Updating the server later is the same pattern:
+
+```bash
+cd /opt/agentic-curiosity
+docker compose pull
+docker compose up -d
+```
+
+If the Docker Hub repository is private, log in on the server first:
+
+```bash
+docker login
+```
+
+If you are exposing the app directly on port `8000`, a minimal UFW setup is:
+
+```bash
+sudo ufw allow OpenSSH
+sudo ufw allow 8000/tcp
+sudo ufw enable
+sudo ufw status
+```
+
+If you are putting the app behind Nginx, do not expose `8000` publicly. Bind Docker to `127.0.0.1:8000:8000` and allow only Nginx through UFW:
+
+```bash
+sudo ufw allow OpenSSH
+sudo ufw allow 'Nginx Full'
+sudo ufw enable
+sudo ufw status
+```
+
+This repo currently runs Django's development server inside the container. That is acceptable for small private deployments and testing, but for a real internet-facing deployment you should put it behind a reverse proxy and preferably switch the container command to a production WSGI server such as Gunicorn later.
+
+GitHub Actions now includes [.github/workflows/docker-image.yml](.github/workflows/docker-image.yml), modeled on the other project:
+
+- pull requests to `master` build the image only
+- pushes to `master` build and push the image to Docker Hub
+
+To make the push step work:
+
+1. Create a Docker Hub repository for the image first, for example `agentic-curiosity`.
+2. Create a Docker Hub access token.
+3. Add these GitHub repository secrets:
+   - `DOCKERHUB_USERNAME`
+   - `DOCKERHUB_TOKEN`
+
+You do not need to push a placeholder image first. Creating the Docker Hub repository and configuring the GitHub secrets is enough.
+
 Useful pages:
 
 - `/`: browser session console for login, course selection, session creation, and question interaction
