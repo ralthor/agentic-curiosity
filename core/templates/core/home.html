@@ -165,6 +165,14 @@
             margin-bottom: 4px;
         }
 
+        .markdown-content > :first-child {
+            margin-top: 0;
+        }
+
+        .markdown-content > :last-child {
+            margin-bottom: 0;
+        }
+
         a {
             color: var(--accent);
         }
@@ -250,7 +258,7 @@
             <div class="detail" id="example-answer-note">Example answers unlock after 2 incomplete answer attempts when one is stored for the current question.</div>
             <div id="example-answer-card" class="card" hidden>
                 <strong>Example Answer</strong>
-                <pre id="example-answer-text"></pre>
+                <div id="example-answer-text" class="markdown-content"></div>
             </div>
             <div class="status" id="chat-status">Waiting for a session.</div>
         </section>
@@ -272,7 +280,15 @@
     </section>
 </main>
 
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script>
+    if (window.marked && typeof window.marked.setOptions === "function") {
+        window.marked.setOptions({
+            breaks: true,
+            gfm: true
+        });
+    }
+
     const config = {
         loginUrl: "{{ chat_api_login_url|escapejs }}",
         tokenUrl: "{{ chat_api_token_url|escapejs }}",
@@ -342,15 +358,38 @@
     function appendEntry(title, body) {
         const entry = document.createElement("div");
         entry.className = "entry";
-        entry.innerHTML = `<strong>${title}</strong><div>${body}</div>`;
+        const titleElement = document.createElement("strong");
+        titleElement.textContent = title;
+        const bodyElement = document.createElement("div");
+        bodyElement.className = "markdown-content";
+        bodyElement.innerHTML = renderMarkdown(body);
+        entry.appendChild(titleElement);
+        entry.appendChild(bodyElement);
         transcript.prepend(entry);
+    }
+
+    function escapeHtml(value) {
+        return String(value)
+            .replaceAll("&", "&amp;")
+            .replaceAll("<", "&lt;")
+            .replaceAll(">", "&gt;")
+            .replaceAll('"', "&quot;")
+            .replaceAll("'", "&#39;");
+    }
+
+    function renderMarkdown(value) {
+        const text = String(value || "");
+        if (window.marked && typeof window.marked.parse === "function") {
+            return window.marked.parse(text);
+        }
+        return `<p>${escapeHtml(text).replaceAll("\n", "<br>")}</p>`;
     }
 
     function renderExampleAnswer(activeQuestion) {
         if (!activeQuestion) {
             exampleAnswerButton.hidden = true;
             exampleAnswerCard.hidden = true;
-            exampleAnswerText.textContent = "";
+            exampleAnswerText.innerHTML = "";
             exampleAnswerNote.textContent = "Create a session to start answering questions.";
             state.revealedExamplePresentationId = "";
             return;
@@ -366,7 +405,7 @@
         exampleAnswerButton.hidden = !isUnlocked;
         exampleAnswerButton.textContent = isRevealed ? "Hide Example Answer" : "Show Example Answer";
         exampleAnswerCard.hidden = !isRevealed;
-        exampleAnswerText.textContent = isRevealed ? activeQuestion.example_answer : "";
+        exampleAnswerText.innerHTML = isRevealed ? renderMarkdown(activeQuestion.example_answer) : "";
 
         if (!hasExampleAnswer) {
             exampleAnswerNote.textContent = "No example answer is stored for this question yet.";
@@ -532,7 +571,7 @@
         }
         appendEntry(
             payload.interaction_type,
-            `${payload.message}${extras.length ? `<div style="margin-top:6px; color:#6d6257;">${extras.join(" | ")}</div>` : ""}`
+            `${payload.message}${extras.length ? `\n\n${extras.join(" | ")}` : ""}`
         );
         setStatus(chatStatus, `Handled ${payload.interaction_type}.`);
     }

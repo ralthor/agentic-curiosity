@@ -17,6 +17,8 @@ class HomePageTests(SimpleTestCase):
         self.assertContains(response, "Hint</button>")
         self.assertContains(response, "Skip</button>")
         self.assertContains(response, "Show Example Answer")
+        self.assertContains(response, "marked.min.js")
+        self.assertContains(response, "renderMarkdown")
 
     def test_course_topics_page_renders_course_studio(self):
         response = self.client.get("/course-topics/")
