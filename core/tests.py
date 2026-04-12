@@ -21,4 +21,6 @@ class HomePageTests(SimpleTestCase):
         self.assertTemplateUsed(response, "core/course_topics.html")
         self.assertContains(response, "Course Studio")
         self.assertContains(response, "Create Course")
+        self.assertContains(response, "Import Questions")
+        self.assertContains(response, "Import Questions</button>")
         self.assertContains(response, "/api/chat/courses/")

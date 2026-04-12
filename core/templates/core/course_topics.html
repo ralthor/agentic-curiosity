@@ -41,13 +41,13 @@
         h1, h2 { margin: 0 0 10px; }
         p { margin: 0; color: var(--muted); line-height: 1.5; }
 
-        textarea, input, button {
+        textarea, input, select, button {
             width: 100%;
             font: inherit;
             border-radius: 12px;
         }
 
-        textarea, input {
+        textarea, input, select {
             margin-top: 12px;
             border: 1px solid var(--line);
             padding: 12px 14px;
@@ -105,6 +105,12 @@
             font-family: Consolas, monospace;
         }
 
+        .detail {
+            margin-top: 10px;
+            color: var(--muted);
+            line-height: 1.5;
+        }
+
         a { color: var(--accent); }
     </style>
 </head>
@@ -153,6 +159,19 @@
     }
   ]
 }</pre>
+            <p style="margin-top: 12px;">To add questions to an existing course, select the course below and send only a <code>questions</code> payload that references the stored topic and question type by id, import key, or name.</p>
+            <pre>{
+  "questions": [
+    {
+      "topic_import_key": "motion",
+      "question_type_import_key": "short",
+      "question_text": "What unit is speed usually measured in?",
+      "max_marks": 4,
+      "sample_answer": "Metres per second (m/s).",
+      "marking_notes": "Accept metres per second or m s^-1."
+    }
+  ]
+}</pre>
         </section>
     </div>
 
@@ -187,6 +206,29 @@
     </section>
 
     <section class="panel">
+        <h2>Import Questions</h2>
+        <p>Select an existing course and paste JSON for new questions only. Topics and question types must already exist on that course.</p>
+        <select id="question-course-select">
+            <option value="">Load courses to select one</option>
+        </select>
+        <div class="detail" id="question-course-detail">Select a stored course to see available topic and question type references.</div>
+        <textarea id="question-payload-input">{
+  "questions": [
+    {
+      "topic_import_key": "addition",
+      "question_type_import_key": "worked",
+      "question_text": "What is 3 + 4?",
+      "max_marks": 4,
+      "sample_answer": "7",
+      "marking_notes": "Award full marks for the correct answer 7."
+    }
+  ]
+}</textarea>
+        <button id="import-questions-button" type="button">Import Questions</button>
+        <div class="status" id="question-status">Ready to add new questions to an existing course.</div>
+    </section>
+
+    <section class="panel">
         <h2>Stored Courses</h2>
         <button id="load-courses-button" type="button">Reload Courses</button>
         <div class="course-list" id="course-list">
@@ -205,7 +247,11 @@
     const tokenField = document.getElementById("token-input");
     const tokenStatus = document.getElementById("token-status");
     const courseStatus = document.getElementById("course-status");
+    const questionStatus = document.getElementById("question-status");
     const payloadField = document.getElementById("payload-input");
+    const questionPayloadField = document.getElementById("question-payload-input");
+    const questionCourseSelect = document.getElementById("question-course-select");
+    const questionCourseDetail = document.getElementById("question-course-detail");
     const courseList = document.getElementById("course-list");
 
     tokenField.value = localStorage.getItem(storageKey) || "";
@@ -243,14 +289,24 @@
         courseList.innerHTML = "";
         if (!courses.length) {
             courseList.innerHTML = '<div class="course-card">No courses saved yet.</div>';
+            questionCourseSelect.innerHTML = '<option value="">No courses available</option>';
+            questionCourseDetail.textContent = "Select a stored course to see available topic and question type references.";
             return;
         }
 
+        const previousSelectedCourseId = questionCourseSelect.value;
+        questionCourseSelect.innerHTML = '<option value="">Select a course for question import</option>';
+
         courses.forEach((course) => {
+            const option = document.createElement("option");
+            option.value = String(course.id);
+            option.textContent = `${course.name} (${course.question_count} questions)`;
+            questionCourseSelect.appendChild(option);
+
             const card = document.createElement("div");
             card.className = "course-card";
-            const topicNames = (course.topics || []).map((topic) => topic.name).join(", ") || "none";
-            const typeNames = (course.question_types || []).map((item) => item.name).join(", ") || "none";
+            const topicNames = (course.topics || []).map((topic) => topic.import_key ? `${topic.name} [${topic.import_key}]` : topic.name).join(", ") || "none";
+            const typeNames = (course.question_types || []).map((item) => item.import_key ? `${item.name} [${item.import_key}]` : item.name).join(", ") || "none";
             card.innerHTML = `
                 <strong>${course.name}</strong>
                 <div style="margin-top: 8px; color: #6a6158;">
@@ -261,6 +317,30 @@
             `;
             courseList.appendChild(card);
         });
+
+        if (courses.some((course) => String(course.id) === previousSelectedCourseId)) {
+            questionCourseSelect.value = previousSelectedCourseId;
+        } else if (courses.length === 1) {
+            questionCourseSelect.value = String(courses[0].id);
+        }
+
+        renderSelectedCourseDetail();
+    }
+
+    function renderSelectedCourseDetail() {
+        const selectedCourse = (availableCourses || []).find((course) => String(course.id) === questionCourseSelect.value);
+        if (!selectedCourse) {
+            questionCourseDetail.textContent = "Select a stored course to see available topic and question type references.";
+            return;
+        }
+
+        const topicNames = (selectedCourse.topics || []).map((topic) => topic.import_key ? `${topic.name} [${topic.import_key}]` : topic.name).join(", ") || "none";
+        const typeNames = (selectedCourse.question_types || []).map((item) => item.import_key ? `${item.name} [${item.import_key}]` : item.name).join(", ") || "none";
+        questionCourseDetail.innerHTML = `
+            <strong>${selectedCourse.name}</strong><br>
+            Topics: ${topicNames}<br>
+            Question types: ${typeNames}
+        `;
     }
 
     async function loadCourses() {
@@ -290,6 +370,36 @@
         await loadCourses();
     }
 
+    async function importQuestions() {
+        if (!currentToken()) {
+            throw new Error("Provide a token first.");
+        }
+        const selectedCourseId = questionCourseSelect.value.trim();
+        if (!selectedCourseId) {
+            throw new Error("Select a course first.");
+        }
+
+        let payload;
+        try {
+            payload = JSON.parse(questionPayloadField.value);
+        } catch (error) {
+            throw new Error("Question payload must be valid JSON.");
+        }
+
+        if (Array.isArray(payload)) {
+            payload = { questions: payload };
+        }
+
+        const response = await fetchJson(`${config.coursesUrl}${selectedCourseId}/questions/import/`, {
+            method: "POST",
+            body: JSON.stringify(payload)
+        });
+        setStatus(questionStatus, `Imported ${response.imported_question_count} question(s) into ${response.course.name}.`);
+        await loadCourses();
+        questionCourseSelect.value = selectedCourseId;
+        renderSelectedCourseDetail();
+    }
+
     document.getElementById("use-session-button").addEventListener("click", async () => {
         setStatus(tokenStatus, "Requesting session token...");
         try {
@@ -313,6 +423,14 @@
         setStatus(courseStatus, "Loading courses...");
         loadCourses().catch((error) => setStatus(courseStatus, error.message, true));
     });
+
+    document.getElementById("import-questions-button").addEventListener("click", () => {
+        storeToken();
+        setStatus(questionStatus, "Importing questions...");
+        importQuestions().catch((error) => setStatus(questionStatus, error.message, true));
+    });
+
+    questionCourseSelect.addEventListener("change", renderSelectedCourseDetail);
 
     tokenField.addEventListener("change", storeToken);
     if (currentToken()) {

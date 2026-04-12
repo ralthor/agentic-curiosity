@@ -32,7 +32,7 @@ uv run python manage.py runserver
 Useful pages:
 
 - `/`: session console for login, course selection, session creation, and question interaction
-- `/course-topics/`: JSON import page for course/question-bank creation
+- `/course-topics/`: JSON import page for full course creation and questions-only imports into existing courses
 - `/admin/`: Django admin for course and runtime records
 
 ## Runtime Model
@@ -96,6 +96,7 @@ Base path: `/api/chat/`
 - `POST /token/`: return the current browser session's API token
 - `GET /courses/`: list courses
 - `POST /courses/`: create a course and optionally bulk import topics, question types, and questions
+- `POST /courses/<course_id>/questions/import/`: append new questions to an existing course
 - `POST /sessions/`: create a session for a `course_id`
 - `GET /sessions/<session_id>/`: return active question and derived progress
 - `POST /chat/`: classify the message as hint, answer, or skip and return the updated active-question view
@@ -151,6 +152,27 @@ curl -X POST http://127.0.0.1:8000/api/chat/chat/ \
 ```
 
 The import API resolves question references by topic/question-type id, import key, or name.
+
+## Questions-Only Import Payload
+
+`POST /api/chat/courses/<course_id>/questions/import/` accepts a questions-only payload for an existing course:
+
+```json
+{
+  "questions": [
+    {
+      "topic_import_key": "motion",
+      "question_type_import_key": "short",
+      "question_text": "What unit is speed usually measured in?",
+      "max_marks": 4,
+      "sample_answer": "Metres per second (m/s).",
+      "marking_notes": "Accept metres per second or m s^-1."
+    }
+  ]
+}
+```
+
+You can reference the target topic and question type by id, import key, or name.
 
 ## Project Layout
 

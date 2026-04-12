@@ -211,24 +211,31 @@ def _create_course_from_payload(payload: dict) -> Course:
                 import_key=_optional_string(question_type_payload, "import_key"),
             )
 
-        for question_payload in questions_payload:
-            max_marks = _parse_positive_int(question_payload.get("max_marks"))
-            if max_marks is None:
-                raise ValueError("Each question must include a positive integer max_marks.")
-            question = CourseQuestion(
-                course=course,
-                topic=_resolve_course_topic_for_payload(course=course, item=question_payload),
-                question_type=_resolve_question_type_for_payload(course=course, item=question_payload),
-                question_text=_require_non_blank_string(question_payload, "question_text"),
-                max_marks=max_marks,
-                sample_answer=_optional_string(question_payload, "sample_answer"),
-                marking_notes=_optional_string(question_payload, "marking_notes"),
-                import_key=_optional_string(question_payload, "import_key"),
-            )
-            question.full_clean()
-            question.save()
+        _create_questions_for_course(course=course, questions_payload=questions_payload)
 
     return course
+
+
+def _create_questions_for_course(*, course: Course, questions_payload: list[dict]) -> int:
+    created_count = 0
+    for question_payload in questions_payload:
+        max_marks = _parse_positive_int(question_payload.get("max_marks"))
+        if max_marks is None:
+            raise ValueError("Each question must include a positive integer max_marks.")
+        question = CourseQuestion(
+            course=course,
+            topic=_resolve_course_topic_for_payload(course=course, item=question_payload),
+            question_type=_resolve_question_type_for_payload(course=course, item=question_payload),
+            question_text=_require_non_blank_string(question_payload, "question_text"),
+            max_marks=max_marks,
+            sample_answer=_optional_string(question_payload, "sample_answer"),
+            marking_notes=_optional_string(question_payload, "marking_notes"),
+            import_key=_optional_string(question_payload, "import_key"),
+        )
+        question.full_clean()
+        question.save()
+        created_count += 1
+    return created_count
 
 
 def _resolve_selector_override_topic(course: Course, payload: dict) -> CourseTopic | None:
@@ -307,6 +314,36 @@ def courses_view(request):
         return _json_error(str(exc), status=400)
 
     return JsonResponse({"course": _serialize_course(course)}, status=201)
+
+
+@csrf_exempt
+@require_POST
+def import_course_questions_view(request, course_id: int):
+    _user, error_response = _require_token_user(request)
+    if error_response is not None:
+        return error_response
+
+    course = Course.objects.filter(pk=course_id).first()
+    if course is None:
+        return _json_error("Course not found.", status=404)
+
+    try:
+        payload = _load_json_body(request)
+        questions_payload = _require_object_list(payload, "questions")
+        if not questions_payload:
+            raise ValueError("questions must contain at least one item.")
+        with transaction.atomic():
+            created_count = _create_questions_for_course(course=course, questions_payload=questions_payload)
+    except (IntegrityError, ValidationError, ValueError) as exc:
+        return _json_error(str(exc), status=400)
+
+    return JsonResponse(
+        {
+            "course": _serialize_course(course),
+            "imported_question_count": created_count,
+        },
+        status=201,
+    )
 
 
 @csrf_exempt

@@ -248,6 +248,52 @@ class ChatApiTests(TestCase):
         self.assertEqual(course.question_types.count(), 1)
         self.assertEqual(course.questions.count(), 1)
 
+    def test_course_question_import_endpoint_adds_questions_to_existing_course(self):
+        token = ApiToken.issue_for_user(self.user)
+
+        response = self._post_json(
+            f"/api/chat/courses/{self.course.pk}/questions/import/",
+            {
+                "questions": [
+                    {
+                        "topic_import_key": "addition",
+                        "question_type_import_key": "worked",
+                        "question_text": "What is 7 + 1?",
+                        "max_marks": 4,
+                        "sample_answer": "8",
+                        "marking_notes": "Award full marks for 8.",
+                    },
+                    {
+                        "topic_name": "Subtraction",
+                        "question_type_name": "Worked Answer",
+                        "question_text": "What is 9 - 4?",
+                        "max_marks": 4,
+                        "sample_answer": "5",
+                    },
+                ]
+            },
+            **self._authorization_header(token),
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.course.refresh_from_db()
+        self.assertEqual(response.json()["imported_question_count"], 2)
+        self.assertEqual(self.course.questions.count(), 4)
+        self.assertTrue(self.course.questions.filter(question_text="What is 7 + 1?").exists())
+        self.assertTrue(self.course.questions.filter(question_text="What is 9 - 4?").exists())
+
+    def test_course_question_import_endpoint_requires_at_least_one_question(self):
+        token = ApiToken.issue_for_user(self.user)
+
+        response = self._post_json(
+            f"/api/chat/courses/{self.course.pk}/questions/import/",
+            {"questions": []},
+            **self._authorization_header(token),
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "questions must contain at least one item.")
+
     def test_create_session_requires_course_id(self):
         token = ApiToken.issue_for_user(self.user)
 
