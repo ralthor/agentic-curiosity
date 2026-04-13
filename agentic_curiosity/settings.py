@@ -40,6 +40,7 @@ SECRET_KEY = os.environ.get(
 DEBUG = env_bool('DJANGO_DEBUG', default=True)
 
 ALLOWED_HOSTS = env_list('DJANGO_ALLOWED_HOSTS', default=[])
+CSRF_TRUSTED_ORIGINS = env_list('DJANGO_CSRF_TRUSTED_ORIGINS', default=[])
 OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
 OPENAI_ORGANIZATION = os.environ.get('OPENAI_ORGANIZATION')
 OPENAI_PROJECT = os.environ.get('OPENAI_PROJECT')
@@ -52,6 +53,16 @@ AI_CHAT_CONTEXT_THRESHOLD_BYTES = env_int('AI_CHAT_CONTEXT_THRESHOLD_BYTES', def
 AI_CHAT_RECENT_TURNS_TO_KEEP = env_int('AI_CHAT_RECENT_TURNS_TO_KEEP', default=10)
 AI_CHAT_MODEL_RECENT_TURNS = env_int('AI_CHAT_MODEL_RECENT_TURNS', default=4)
 AI_CHAT_LOG_LEVEL = os.environ.get('AI_CHAT_LOG_LEVEL', 'INFO')
+USE_X_FORWARDED_HOST = env_bool('DJANGO_USE_X_FORWARDED_HOST', default=False)
+SECURE_SSL_REDIRECT = env_bool('DJANGO_SECURE_SSL_REDIRECT', default=False)
+SESSION_COOKIE_SECURE = env_bool('DJANGO_SESSION_COOKIE_SECURE', default=False)
+CSRF_COOKIE_SECURE = env_bool('DJANGO_CSRF_COOKIE_SECURE', default=False)
+SECURE_HSTS_SECONDS = env_int('DJANGO_SECURE_HSTS_SECONDS', default=0)
+SECURE_HSTS_INCLUDE_SUBDOMAINS = env_bool('DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS', default=False)
+SECURE_HSTS_PRELOAD = env_bool('DJANGO_SECURE_HSTS_PRELOAD', default=False)
+
+if env_bool('DJANGO_TRUST_X_FORWARDED_PROTO', default=False):
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
 
 # Application definition
@@ -144,6 +155,7 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
 STATIC_URL = 'static/'
+STATIC_ROOT = Path(os.environ.get('DJANGO_STATIC_ROOT', str(BASE_DIR / 'staticfiles'))).expanduser()
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field

@@ -6,6 +6,7 @@ services:
     env_file:
       - .env
     environment:
+      DJANGO_APP_SERVER: runserver
       DJANGO_DB_PATH: /data/db.sqlite3
     volumes:
       - ./docker-data:/data
