@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Question Attempts</title>
+    <style>
+        :root {
+            --bg: #f5efe5;
+            --panel: #fffaf2;
+            --ink: #1f1b16;
+            --muted: #6d6257;
+            --line: #d9cbb7;
+            --accent: #0f766e;
+            --accent-soft: #d8f2ee;
+            --danger: #b42318;
+        }
+
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            font-family: Georgia, "Times New Roman", serif;
+            background: radial-gradient(circle at top, #fff8eb 0%, var(--bg) 56%, #eadfce 100%);
+            color: var(--ink);
+        }
+
+        main {
+            width: min(1180px, calc(100% - 32px));
+            margin: 32px auto 48px;
+            display: grid;
+            gap: 18px;
+        }
+
+        .hero, .panel, .attempt-card {
+            background: rgba(255, 250, 242, 0.92);
+            border: 1px solid var(--line);
+            border-radius: 18px;
+            padding: 22px;
+            box-shadow: 0 14px 36px rgba(80, 57, 30, 0.08);
+        }
+
+        .hero h1, .panel h2 {
+            margin: 0 0 10px;
+        }
+
+        .hero p, .panel p {
+            margin: 0;
+            color: var(--muted);
+            line-height: 1.5;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 18px;
+        }
+
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 10px;
+            margin-top: 16px;
+        }
+
+        .summary-card {
+            border: 1px solid var(--line);
+            border-radius: 14px;
+            padding: 14px;
+            background: #fffdf8;
+        }
+
+        .summary-card strong {
+            display: block;
+            margin-bottom: 6px;
+        }
+
+        label {
+            display: block;
+            margin: 14px 0 6px;
+            font-size: 0.95rem;
+        }
+
+        input, select, button {
+            width: 100%;
+            font: inherit;
+            border-radius: 12px;
+        }
+
+        input, select {
+            padding: 12px 14px;
+            border: 1px solid var(--line);
+            background: #fffdf8;
+            color: var(--ink);
+        }
+
+        button {
+            border: 0;
+            padding: 12px 16px;
+            background: var(--accent);
+            color: white;
+            cursor: pointer;
+            margin-top: 12px;
+        }
+
+        button.secondary {
+            background: #efe4d2;
+            color: var(--ink);
+        }
+
+        .status {
+            min-height: 24px;
+            color: var(--muted);
+            margin-top: 12px;
+        }
+
+        .status.error {
+            color: var(--danger);
+        }
+
+        .stack {
+            display: grid;
+            gap: 14px;
+        }
+
+        .attempt-card {
+            padding: 18px;
+        }
+
+        .attempt-header {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            align-items: flex-start;
+            margin-bottom: 14px;
+        }
+
+        .attempt-header h3 {
+            margin: 0;
+            font-size: 1.1rem;
+        }
+
+        .attempt-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 14px;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 999px;
+            background: var(--accent-soft);
+            color: var(--accent);
+            font-size: 0.88rem;
+        }
+
+        .attempt-body {
+            display: grid;
+            gap: 12px;
+        }
+
+        .section-block {
+            border: 1px solid var(--line);
+            border-radius: 14px;
+            padding: 14px;
+            background: #fffdf8;
+        }
+
+        .section-block strong {
+            display: block;
+            margin-bottom: 8px;
+        }
+
+        .markdown-content > :first-child {
+            margin-top: 0;
+        }
+
+        .markdown-content > :last-child {
+            margin-bottom: 0;
+        }
+
+        .empty-state {
+            border: 1px dashed var(--line);
+            border-radius: 18px;
+            padding: 28px;
+            text-align: center;
+            color: var(--muted);
+            background: rgba(255, 253, 248, 0.9);
+        }
+
+        a {
+            color: var(--accent);
+        }
+
+        @media (max-width: 680px) {
+            .attempt-header {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+<body>
+<main>
+    <section class="hero">
+        <h1>Question Attempts</h1>
+        <p>Review every hint, answer, skip, and full-answer request recorded for the current student account.</p>
+        <p style="margin-top: 10px;"><a href="{{ home_url }}">Open Session Console</a> | <a href="{{ course_topics_page_url }}">Open Course Studio</a> | <a href="{{ course_questions_page_url }}">Manage Course Questions</a></p>
+    </section>
+
+    <div class="grid">
+        <section class="panel">
+            <h2>Login</h2>
+            <p>Use the same token-backed login flow as the session console, then load your recorded attempt history.</p>
+            <label for="username">Username</label>
+            <input id="username" placeholder="alice">
+            <label for="password">Password</label>
+            <input id="password" type="password" placeholder="wonderland">
+            <button id="login-button" type="button">Login and Load Attempts</button>
+            <div class="status" id="auth-status">Start by logging in.</div>
+        </section>
+
+        <section class="panel">
+            <h2>Filter</h2>
+            <p>Filter the timeline by course, or reload the latest attempts from the API.</p>
+            <label for="course-filter">Course</label>
+            <select id="course-filter">
+                <option value="">All courses</option>
+            </select>
+            <button id="load-attempts-button" type="button">Load Attempts</button>
+            <button id="clear-filter-button" type="button" class="secondary">Show All Courses</button>
+            <div class="status" id="attempts-status">No attempts loaded.</div>
+        </section>
+    </div>
+
+    <section class="panel">
+        <h2>Summary</h2>
+        <p>These totals update with the current course filter.</p>
+        <div class="summary-grid">
+            <div class="summary-card">
+                <strong>Total Attempts</strong>
+                <span id="summary-total">0</span>
+            </div>
+            <div class="summary-card">
+                <strong>Questions Touched</strong>
+                <span id="summary-questions">0</span>
+            </div>
+            <div class="summary-card">
+                <strong>Completed Attempts</strong>
+                <span id="summary-completed">0</span>
+            </div>
+            <div class="summary-card">
+                <strong>Average Marks</strong>
+                <span id="summary-average">n/a</span>
+            </div>
+        </div>
+    </section>
+
+    <section class="panel">
+        <h2>Attempt Timeline</h2>
+        <div id="attempt-list" class="stack">
+            <div class="empty-state">Login and load attempts to see the student history.</div>
+        </div>
+    </section>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script>
+    if (window.marked && typeof window.marked.setOptions === "function") {
+        window.marked.setOptions({
+            breaks: true,
+            gfm: true
+        });
+    }
+
+    const config = {
+        loginUrl: "{{ chat_api_login_url|escapejs }}",
+        coursesUrl: "{{ chat_api_courses_url|escapejs }}",
+        attemptsUrl: "{{ chat_api_attempts_url|escapejs }}"
+    };
+
+    const storageKeys = {
+        token: "agentic-curiosity.token"
+    };
+
+    const state = {
+        token: localStorage.getItem(storageKeys.token) || "",
+        selectedCourseId: ""
+    };
+
+    const authStatus = document.getElementById("auth-status");
+    const attemptsStatus = document.getElementById("attempts-status");
+    const usernameField = document.getElementById("username");
+    const passwordField = document.getElementById("password");
+    const courseFilter = document.getElementById("course-filter");
+    const attemptList = document.getElementById("attempt-list");
+    const summaryTotal = document.getElementById("summary-total");
+    const summaryQuestions = document.getElementById("summary-questions");
+    const summaryCompleted = document.getElementById("summary-completed");
+    const summaryAverage = document.getElementById("summary-average");
+
+    let availableCourses = [];
+    let attempts = [];
+
+    function setStatus(target, message, isError = false) {
+        target.textContent = message;
+        target.classList.toggle("error", isError);
+    }
+
+    function storeState() {
+        localStorage.setItem(storageKeys.token, state.token);
+    }
+
+    function escapeHtml(value) {
+        return String(value)
+            .replaceAll("&", "&amp;")
+            .replaceAll("<", "&lt;")
+            .replaceAll(">", "&gt;")
+            .replaceAll('"', "&quot;")
+            .replaceAll("'", "&#39;");
+    }
+
+    function renderMarkdown(value) {
+        const text = String(value || "");
+        if (window.marked && typeof window.marked.parse === "function") {
+            return window.marked.parse(text);
+        }
+        return `<p>${escapeHtml(text).replaceAll("\n", "<br>")}</p>`;
+    }
+
+    function formatDate(value) {
+        if (!value) {
+            return "Unknown time";
+        }
+        const parsed = new Date(value);
+        if (Number.isNaN(parsed.getTime())) {
+            return value;
+        }
+        return new Intl.DateTimeFormat(undefined, {
+            dateStyle: "medium",
+            timeStyle: "short"
+        }).format(parsed);
+    }
+
+    function renderCourses() {
+        const currentValue = state.selectedCourseId;
+        courseFilter.innerHTML = "";
+
+        const placeholder = document.createElement("option");
+        placeholder.value = "";
+        placeholder.textContent = "All courses";
+        courseFilter.appendChild(placeholder);
+
+        availableCourses.forEach((course) => {
+            const option = document.createElement("option");
+            option.value = String(course.id);
+            option.textContent = `${course.name} (${course.question_count} questions)`;
+            courseFilter.appendChild(option);
+        });
+
+        courseFilter.value = currentValue;
+    }
+
+    function getFilteredAttempts() {
+        if (!state.selectedCourseId) {
+            return attempts;
+        }
+        return attempts.filter((attempt) => String(attempt.course.id) === state.selectedCourseId);
+    }
+
+    function renderSummary(filteredAttempts) {
+        const uniqueQuestions = new Set(filteredAttempts.map((attempt) => attempt.question.id));
+        const markedAttempts = filteredAttempts.filter((attempt) => Number.isInteger(attempt.awarded_marks));
+        const totalMarks = markedAttempts.reduce((sum, attempt) => sum + attempt.awarded_marks, 0);
+
+        summaryTotal.textContent = String(filteredAttempts.length);
+        summaryQuestions.textContent = String(uniqueQuestions.size);
+        summaryCompleted.textContent = String(filteredAttempts.filter((attempt) => attempt.completed_presentation).length);
+        summaryAverage.textContent = markedAttempts.length
+            ? `${(totalMarks / markedAttempts.length).toFixed(1)}`
+            : "n/a";
+    }
+
+    function renderAttempts() {
+        const filteredAttempts = getFilteredAttempts();
+        renderSummary(filteredAttempts);
+
+        if (!filteredAttempts.length) {
+            attemptList.innerHTML = '<div class="empty-state">No attempts match the current filter.</div>';
+            return;
+        }
+
+        attemptList.innerHTML = filteredAttempts.map((attempt) => {
+            const marks = Number.isInteger(attempt.awarded_marks)
+                ? `${attempt.awarded_marks}/${attempt.question.max_marks}`
+                : "n/a";
+            const leitner = Number.isInteger(attempt.derived_leitner_score)
+                ? String(attempt.derived_leitner_score)
+                : "n/a";
+            const responseBody = attempt.model_response_text
+                ? renderMarkdown(attempt.model_response_text)
+                : "<p>No model response stored.</p>";
+
+            return `
+                <article class="attempt-card">
+                    <div class="attempt-header">
+                        <div>
+                            <h3>${escapeHtml(attempt.question.question_text)}</h3>
+                            <p>${escapeHtml(attempt.course.name)} | ${escapeHtml(attempt.topic.name)} | ${escapeHtml(attempt.question_type.name)}</p>
+                        </div>
+                        <div>${escapeHtml(formatDate(attempt.created_at))}</div>
+                    </div>
+                    <div class="attempt-meta">
+                        <span class="badge">${escapeHtml(attempt.interaction_label)}</span>
+                        <span class="badge">Session ${escapeHtml(attempt.session.id)}</span>
+                        <span class="badge">Marks ${escapeHtml(marks)}</span>
+                        <span class="badge">Leitner ${escapeHtml(leitner)}</span>
+                        <span class="badge">${attempt.completed_presentation ? "Question Closed" : "Question Still Open"}</span>
+                    </div>
+                    <div class="attempt-body">
+                        <div class="section-block">
+                            <strong>Student Message</strong>
+                            <div class="markdown-content">${renderMarkdown(attempt.student_message)}</div>
+                        </div>
+                        <div class="section-block">
+                            <strong>Model Response</strong>
+                            <div class="markdown-content">${responseBody}</div>
+                        </div>
+                    </div>
+                </article>
+            `;
+        }).join("");
+    }
+
+    async function fetchJson(url, options = {}) {
+        const headers = new Headers(options.headers || {});
+        if (state.token) {
+            headers.set("Authorization", `Token ${state.token}`);
+        }
+        if (options.body && !headers.has("Content-Type")) {
+            headers.set("Content-Type", "application/json");
+        }
+        const response = await fetch(url, { ...options, headers });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(payload.error || `Request failed with status ${response.status}.`);
+        }
+        return payload;
+    }
+
+    async function loadCourses() {
+        const payload = await fetchJson(config.coursesUrl);
+        availableCourses = payload.courses || [];
+        renderCourses();
+    }
+
+    async function loadAttempts() {
+        const payload = await fetchJson(config.attemptsUrl);
+        attempts = payload.attempts || [];
+        renderAttempts();
+        setStatus(attemptsStatus, `Loaded ${attempts.length} attempt(s).`);
+    }
+
+    async function loadDashboard() {
+        if (!state.token) {
+            throw new Error("Login first.");
+        }
+        await Promise.all([loadCourses(), loadAttempts()]);
+    }
+
+    async function login() {
+        const username = usernameField.value.trim();
+        const password = passwordField.value;
+        if (!username || !password) {
+            throw new Error("username and password are required.");
+        }
+        const payload = await fetchJson(config.loginUrl, {
+            method: "POST",
+            body: JSON.stringify({ username, password })
+        });
+        state.token = payload.token;
+        storeState();
+        setStatus(authStatus, `Authenticated as ${payload.username}.`);
+        await loadDashboard();
+    }
+
+    document.getElementById("login-button").addEventListener("click", () => {
+        setStatus(authStatus, "Logging in...");
+        login().catch((error) => setStatus(authStatus, error.message, true));
+    });
+
+    document.getElementById("load-attempts-button").addEventListener("click", () => {
+        setStatus(attemptsStatus, "Loading attempts...");
+        loadDashboard().catch((error) => setStatus(attemptsStatus, error.message, true));
+    });
+
+    document.getElementById("clear-filter-button").addEventListener("click", () => {
+        state.selectedCourseId = "";
+        courseFilter.value = "";
+        renderAttempts();
+        setStatus(attemptsStatus, "Showing attempts from all courses.");
+    });
+
+    courseFilter.addEventListener("change", () => {
+        state.selectedCourseId = courseFilter.value;
+        renderAttempts();
+        const message = state.selectedCourseId
+            ? "Showing attempts for the selected course."
+            : "Showing attempts from all courses.";
+        setStatus(attemptsStatus, message);
+    });
+
+    if (state.token) {
+        setStatus(authStatus, "Using stored token.");
+        loadDashboard().catch((error) => setStatus(attemptsStatus, error.message, true));
+    }
+</script>
+</body>
+</html>

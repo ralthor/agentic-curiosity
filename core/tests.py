@@ -26,6 +26,8 @@ class HomePageTests(SimpleTestCase):
         self.assertContains(response, "Full Answer</button>")
         self.assertContains(response, "marked.min.js")
         self.assertContains(response, "renderMarkdown")
+        self.assertContains(response, "/course-questions/")
+        self.assertContains(response, "/attempts/")
 
     def test_course_topics_page_renders_course_studio(self):
         response = self.client.get("/course-topics/")
@@ -38,6 +40,35 @@ class HomePageTests(SimpleTestCase):
         self.assertContains(response, "Import Questions</button>")
         self.assertContains(response, "/api/chat/courses/")
         self.assertContains(response, "let availableCourses = [];")
+
+    def test_attempts_page_renders_attempt_history_ui(self):
+        response = self.client.get("/attempts/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "core/attempts.html")
+        self.assertContains(response, "Question Attempts")
+        self.assertContains(response, "Load Attempts")
+        self.assertContains(response, "/api/chat/attempts/")
+        self.assertContains(response, "let attempts = [];")
+
+    def test_course_questions_page_renders_question_editor_ui(self):
+        response = self.client.get("/course-questions/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "core/course_questions.html")
+        self.assertContains(response, "Course Questions")
+        self.assertContains(response, "Question Lookup")
+        self.assertContains(response, "Search Question Text")
+        self.assertContains(response, "Add Question")
+        self.assertContains(response, "Update Question")
+        self.assertContains(response, "Questions load automatically for the selected course.")
+        self.assertContains(response, "--accent: #7a1838;")
+        self.assertNotContains(response, "Import Key")
+        self.assertContains(response, "/api/chat/courses/")
+        self.assertContains(response, "loadSelectedCourseQuestions = true")
+        self.assertContains(response, "function filteredQuestions()")
+        self.assertContains(response, "question-lookup-select")
+        self.assertContains(response, "let selectedQuestionId = null;")
 
 
 class AdminLoginRateLimitTests(TestCase):

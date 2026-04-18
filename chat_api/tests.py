@@ -203,6 +203,14 @@ class ChatApiTests(TestCase):
             **extra,
         )
 
+    def _patch_json(self, path, payload, **extra):
+        return self.client.patch(
+            path,
+            data=json.dumps(payload),
+            content_type="application/json",
+            **extra,
+        )
+
     def _authorization_header(self, token: ApiToken) -> dict[str, str]:
         return {"HTTP_AUTHORIZATION": f"Token {token.key}"}
 
@@ -357,6 +365,73 @@ class ChatApiTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["error"], "questions must contain at least one item.")
 
+    def test_course_questions_endpoint_lists_course_questions(self):
+        token = ApiToken.issue_for_user(self.user)
+
+        response = self.client.get(
+            f"/api/chat/courses/{self.course.pk}/questions/",
+            **self._authorization_header(token),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["course"]["id"], self.course.pk)
+        self.assertEqual(len(payload["questions"]), 2)
+        self.assertEqual(payload["questions"][0]["topic"]["name"], self.addition.name)
+        self.assertEqual(payload["questions"][0]["question_type"]["name"], self.question_type.name)
+        self.assertEqual(payload["questions"][0]["question_text"], self.q1.question_text)
+
+    def test_course_questions_endpoint_creates_single_question(self):
+        token = ApiToken.issue_for_user(self.user)
+
+        response = self._post_json(
+            f"/api/chat/courses/{self.course.pk}/questions/",
+            {
+                "topic_id": self.subtraction.pk,
+                "question_type_id": self.question_type.pk,
+                "question_text": "What is 8 - 3?",
+                "max_marks": 5,
+                "sample_answer": "5",
+                "example_answer": "A full-mark answer is 5.",
+                "marking_notes": "Award full marks for 5.",
+            },
+            **self._authorization_header(token),
+        )
+
+        self.assertEqual(response.status_code, 201)
+        payload = response.json()
+        self.assertEqual(payload["question"]["topic"]["id"], self.subtraction.pk)
+        self.assertEqual(payload["question"]["question_type"]["id"], self.question_type.pk)
+        self.assertEqual(payload["question"]["max_marks"], 5)
+        self.assertEqual(payload["question"]["import_key"], "what-is-8-3")
+        self.assertTrue(self.course.questions.filter(question_text="What is 8 - 3?").exists())
+
+    def test_course_question_detail_endpoint_updates_question_without_requiring_import_key(self):
+        token = ApiToken.issue_for_user(self.user)
+        self.q1.import_key = "existing-key"
+        self.q1.save(update_fields=["import_key", "updated_at"])
+
+        response = self._patch_json(
+            f"/api/chat/courses/{self.course.pk}/questions/{self.q1.pk}/",
+            {
+                "topic_id": self.subtraction.pk,
+                "question_text": "What is 6 - 1?",
+                "max_marks": 6,
+                "sample_answer": "5",
+                "example_answer": "A full-mark answer is 5 with working.",
+                "marking_notes": "Accept 5 with or without method.",
+            },
+            **self._authorization_header(token),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.q1.refresh_from_db()
+        self.assertEqual(self.q1.topic, self.subtraction)
+        self.assertEqual(self.q1.question_text, "What is 6 - 1?")
+        self.assertEqual(self.q1.max_marks, 6)
+        self.assertEqual(self.q1.import_key, "existing-key")
+        self.assertEqual(response.json()["question"]["topic"]["name"], self.subtraction.name)
+
     def test_create_session_requires_course_id(self):
         token = ApiToken.issue_for_user(self.user)
 
@@ -396,6 +471,53 @@ class ChatApiTests(TestCase):
         self.assertEqual(response.json()["course"]["name"], self.course.name)
         self.assertEqual(response.json()["active_question"]["question_text"], self.q1.question_text)
         self.assertEqual(response.json()["course_progress"]["coverage_pct"], 50)
+
+    def test_attempts_endpoint_returns_only_the_authenticated_students_attempts(self):
+        token = ApiToken.issue_for_user(self.user)
+        session = ChatSession.objects.create(user_id=str(self.user.pk), course=self.course)
+        other_session = ChatSession.objects.create(user_id=str(self.other_user.pk), course=self.course)
+        first_presentation = QuestionPresentation.objects.create(session=session, question=self.q1)
+        second_presentation = QuestionPresentation.objects.create(session=session, question=self.q2)
+        other_presentation = QuestionPresentation.objects.create(session=other_session, question=self.q1)
+
+        first_attempt = QuestionAttempt.objects.create(
+            presentation=first_presentation,
+            interaction_type=QuestionAttempt.InteractionType.HINT_REQUEST,
+            student_message="Can I get a hint?",
+            model_response_text="Try combining two groups.",
+        )
+        second_attempt = QuestionAttempt.objects.create(
+            presentation=second_presentation,
+            interaction_type=QuestionAttempt.InteractionType.ANSWER_ATTEMPT,
+            student_message="It is 3",
+            model_response_text="Correct.",
+            awarded_marks=4,
+            derived_leitner_score=4,
+            completed_presentation=True,
+        )
+        QuestionAttempt.objects.create(
+            presentation=other_presentation,
+            interaction_type=QuestionAttempt.InteractionType.SKIP,
+            student_message="Skip",
+            model_response_text="Moving on.",
+            completed_presentation=True,
+        )
+
+        response = self.client.get(
+            "/api/chat/attempts/",
+            **self._authorization_header(token),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual([attempt["id"] for attempt in payload["attempts"]], [second_attempt.pk, first_attempt.pk])
+        self.assertEqual(payload["attempts"][0]["course"]["name"], self.course.name)
+        self.assertEqual(payload["attempts"][0]["question"]["question_text"], self.q2.question_text)
+        self.assertEqual(payload["attempts"][0]["topic"]["name"], self.subtraction.name)
+        self.assertEqual(payload["attempts"][0]["interaction_type"], "answer_attempt")
+        self.assertEqual(payload["attempts"][0]["awarded_marks"], 4)
+        self.assertTrue(payload["attempts"][0]["completed_presentation"])
+        self.assertEqual(payload["attempts"][1]["interaction_type"], "hint_request")
 
     def test_hint_request_uses_one_model_call_and_does_not_increment_answer_count(self):
         token = ApiToken.issue_for_user(self.user)

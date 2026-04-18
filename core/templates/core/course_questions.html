@@ -1,0 +1,678 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Course Questions</title>
+    <style>
+        :root {
+            --bg: #f6edf1;
+            --panel: #fffafc;
+            --ink: #22131a;
+            --muted: #6f5460;
+            --line: #e3ced7;
+            --accent: #7a1838;
+            --accent-soft: #f6dde6;
+            --accent-deep: #59112a;
+            --danger: #b42318;
+        }
+
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            font-family: Georgia, "Times New Roman", serif;
+            background: radial-gradient(circle at top, #fff7fa 0%, #f8edf2 34%, var(--bg) 100%);
+            color: var(--ink);
+        }
+
+        main {
+            width: min(1240px, calc(100% - 32px));
+            margin: 32px auto 48px;
+            display: grid;
+            gap: 18px;
+        }
+
+        .panel {
+            background: var(--panel);
+            border: 1px solid var(--line);
+            border-radius: 18px;
+            padding: 22px;
+            box-shadow: 0 12px 32px rgba(89, 17, 42, 0.08);
+        }
+
+        h1, h2 { margin: 0 0 10px; }
+        p { margin: 0; color: var(--muted); line-height: 1.5; }
+        a { color: var(--accent); }
+
+        input, select, textarea, button {
+            width: 100%;
+            font: inherit;
+            border-radius: 12px;
+        }
+
+        input, select, textarea {
+            margin-top: 12px;
+            border: 1px solid var(--line);
+            padding: 12px 14px;
+            background: #fffefb;
+            color: var(--ink);
+        }
+
+        textarea {
+            min-height: 110px;
+            resize: vertical;
+            font-family: Consolas, monospace;
+        }
+
+        button {
+            margin-top: 12px;
+            border: 0;
+            padding: 12px 16px;
+            background: var(--accent);
+            color: white;
+            cursor: pointer;
+        }
+
+        button.secondary {
+            background: #ecd3dc;
+            color: var(--accent-deep);
+        }
+
+        .status {
+            min-height: 24px;
+            margin-top: 10px;
+            color: var(--muted);
+        }
+
+        .status.error {
+            color: var(--danger);
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: minmax(320px, 0.95fr) minmax(380px, 1.25fr);
+            gap: 18px;
+        }
+
+        .stack {
+            display: grid;
+            gap: 18px;
+        }
+
+        .detail {
+            margin-top: 12px;
+            color: var(--muted);
+            line-height: 1.5;
+        }
+
+        .lookup-panel {
+            margin-top: 14px;
+            border: 1px solid var(--line);
+            border-radius: 14px;
+            padding: 14px;
+            background: #fffefb;
+        }
+
+        .lookup-select {
+            min-height: 220px;
+            font-family: Consolas, monospace;
+        }
+
+        .lookup-hint {
+            margin-top: 10px;
+            color: var(--muted);
+            line-height: 1.45;
+        }
+
+        .button-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin-top: 12px;
+        }
+
+        .button-row button {
+            flex: 1 1 180px;
+            margin-top: 0;
+        }
+
+        .field-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 12px;
+        }
+
+        .field-grid input,
+        .field-grid select {
+            margin-top: 0;
+        }
+
+        .field-label {
+            display: grid;
+            gap: 6px;
+            color: var(--muted);
+        }
+
+        @media (max-width: 960px) {
+            .grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+<main>
+    <section class="panel">
+        <h1>Course Questions</h1>
+        <p>Browse the questions stored on a course, add a new one, or load an existing question into the editor and update it.</p>
+        <p style="margin-top: 10px;"><a href="{{ home_url }}">Open Session Console</a> | <a href="{{ course_topics_page_url }}">Open Course Studio</a> | <a href="{{ attempts_page_url }}">View Question Attempts</a></p>
+    </section>
+
+    <div class="grid">
+        <div class="stack">
+            <section class="panel">
+                <h2>Token</h2>
+                <p>Paste a token from the login flow or load the current browser session token.</p>
+                <input id="token-input" placeholder="Token ...">
+                <button id="use-session-button" type="button">Use Django Session Token</button>
+                <div class="status" id="token-status">A token is required to load and edit course questions.</div>
+            </section>
+
+            <section class="panel">
+                <h2>Course Selection</h2>
+                <p>Choose a course to see its question bank and to target new or updated questions. Questions load automatically for the selected course.</p>
+                <select id="course-select">
+                    <option value="">Load courses to select one</option>
+                </select>
+                <div class="button-row">
+                    <button id="load-courses-button" type="button">Reload Courses</button>
+                    <button id="load-questions-button" type="button" class="secondary">Reload Questions</button>
+                </div>
+                <div class="detail" id="course-detail">Select a stored course to view its topics, question types, and questions.</div>
+                <div class="status" id="course-status">Ready to load courses.</div>
+            </section>
+
+            <section class="panel">
+                <h2>Question Lookup</h2>
+                <p>Search by part of the question text or choose directly from the stored-question list, then load that question into the editor for updating.</p>
+                <label class="field-label" style="margin-top: 14px;">
+                    Search Question Text
+                    <input id="question-search-input" placeholder="Type part of the question text">
+                </label>
+                <div class="lookup-panel">
+                    <label class="field-label">
+                        Matching Questions
+                        <select id="question-lookup-select" class="lookup-select" size="8"></select>
+                    </label>
+                    <div class="lookup-hint" id="question-lookup-detail">No questions loaded yet.</div>
+                </div>
+                <div class="status" id="question-list-status">Select a course and load questions.</div>
+            </section>
+        </div>
+
+        <section class="panel">
+            <h2>Question Editor</h2>
+            <p>Add a new question to the selected course or update the currently selected question.</p>
+            <div class="detail" id="editor-detail">No question selected. Fill in the form to add a question.</div>
+
+            <div class="field-grid" style="margin-top: 14px;">
+                <label class="field-label">
+                    Topic
+                    <select id="topic-select">
+                        <option value="">Select a course first</option>
+                    </select>
+                </label>
+                <label class="field-label">
+                    Question Type
+                    <select id="question-type-select">
+                        <option value="">Select a course first</option>
+                    </select>
+                </label>
+                <label class="field-label">
+                    Max Marks
+                    <input id="max-marks-input" type="number" min="1" step="1" placeholder="4">
+                </label>
+            </div>
+
+            <label class="field-label" style="margin-top: 12px;">
+                Question Text
+                <textarea id="question-text-input" placeholder="Write the question prompt here."></textarea>
+            </label>
+
+            <label class="field-label" style="margin-top: 12px;">
+                Sample Answer
+                <textarea id="sample-answer-input" placeholder="Optional short sample answer for marking context."></textarea>
+            </label>
+
+            <label class="field-label" style="margin-top: 12px;">
+                Example Answer
+                <textarea id="example-answer-input" placeholder="Optional authored full-mark answer shown to students."></textarea>
+            </label>
+
+            <label class="field-label" style="margin-top: 12px;">
+                Marking Notes
+                <textarea id="marking-notes-input" placeholder="Optional marking notes or accepted alternatives."></textarea>
+            </label>
+
+            <div class="button-row">
+                <button id="create-question-button" type="button">Add Question</button>
+                <button id="update-question-button" type="button" class="secondary">Update Question</button>
+                <button id="reset-form-button" type="button" class="secondary">Reset Form</button>
+            </div>
+            <div class="status" id="editor-status">Ready to add or update a question.</div>
+        </section>
+    </div>
+</main>
+
+<script>
+    const config = {
+        tokenUrl: "{{ chat_api_token_url|escapejs }}",
+        coursesUrl: "{{ chat_api_courses_url|escapejs }}"
+    };
+
+    const storageKey = "agentic-curiosity.token";
+    const tokenField = document.getElementById("token-input");
+    const tokenStatus = document.getElementById("token-status");
+    const courseStatus = document.getElementById("course-status");
+    const questionListStatus = document.getElementById("question-list-status");
+    const editorStatus = document.getElementById("editor-status");
+    const courseSelect = document.getElementById("course-select");
+    const courseDetail = document.getElementById("course-detail");
+    const questionSearchInput = document.getElementById("question-search-input");
+    const questionLookupSelect = document.getElementById("question-lookup-select");
+    const questionLookupDetail = document.getElementById("question-lookup-detail");
+    const editorDetail = document.getElementById("editor-detail");
+    const topicSelect = document.getElementById("topic-select");
+    const questionTypeSelect = document.getElementById("question-type-select");
+    const maxMarksInput = document.getElementById("max-marks-input");
+    const questionTextInput = document.getElementById("question-text-input");
+    const sampleAnswerInput = document.getElementById("sample-answer-input");
+    const exampleAnswerInput = document.getElementById("example-answer-input");
+    const markingNotesInput = document.getElementById("marking-notes-input");
+
+    let availableCourses = [];
+    let availableQuestions = [];
+    let selectedQuestionId = null;
+
+    tokenField.value = localStorage.getItem(storageKey) || "";
+
+    function setStatus(target, message, isError = false) {
+        target.textContent = message;
+        target.classList.toggle("error", isError);
+    }
+
+    function currentToken() {
+        return tokenField.value.trim();
+    }
+
+    function storeToken() {
+        localStorage.setItem(storageKey, currentToken());
+    }
+
+    function selectedCourse() {
+        return availableCourses.find((course) => String(course.id) === courseSelect.value) || null;
+    }
+
+    function selectedQuestion() {
+        return availableQuestions.find((question) => question.id === selectedQuestionId) || null;
+    }
+
+    function filteredQuestions() {
+        const query = questionSearchInput.value.trim().toLowerCase();
+        if (!query) {
+            return availableQuestions;
+        }
+        return availableQuestions.filter((question) => question.question_text.toLowerCase().includes(query));
+    }
+
+    function courseQuestionsUrl(courseId) {
+        return `${config.coursesUrl}${courseId}/questions/`;
+    }
+
+    function courseQuestionDetailUrl(courseId, questionId) {
+        return `${config.coursesUrl}${courseId}/questions/${questionId}/`;
+    }
+
+    async function fetchJson(url, options = {}) {
+        const headers = new Headers(options.headers || {});
+        if (currentToken()) {
+            headers.set("Authorization", `Token ${currentToken()}`);
+        }
+        if (options.body && !headers.has("Content-Type")) {
+            headers.set("Content-Type", "application/json");
+        }
+        const response = await fetch(url, { ...options, headers });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(payload.error || `Request failed with status ${response.status}.`);
+        }
+        return payload;
+    }
+
+    function renderReferenceSelect(select, items, placeholder) {
+        select.innerHTML = "";
+        const placeholderOption = document.createElement("option");
+        placeholderOption.value = "";
+        placeholderOption.textContent = placeholder;
+        select.appendChild(placeholderOption);
+
+        items.forEach((item) => {
+            const option = document.createElement("option");
+            option.value = String(item.id);
+            option.textContent = item.name;
+            select.appendChild(option);
+        });
+    }
+
+    function clearQuestionSelection() {
+        selectedQuestionId = null;
+        editorDetail.textContent = "No question selected. Fill in the form to add a question.";
+    }
+
+    function resetForm() {
+        clearQuestionSelection();
+        topicSelect.value = "";
+        questionTypeSelect.value = "";
+        maxMarksInput.value = "";
+        questionTextInput.value = "";
+        sampleAnswerInput.value = "";
+        exampleAnswerInput.value = "";
+        markingNotesInput.value = "";
+        renderQuestionLookup();
+    }
+
+    function populateFormFromQuestion(question) {
+        selectedQuestionId = question.id;
+        topicSelect.value = String(question.topic.id);
+        questionTypeSelect.value = String(question.question_type.id);
+        maxMarksInput.value = String(question.max_marks);
+        questionTextInput.value = question.question_text || "";
+        sampleAnswerInput.value = question.sample_answer || "";
+        exampleAnswerInput.value = question.example_answer || "";
+        markingNotesInput.value = question.marking_notes || "";
+        editorDetail.textContent = `Editing question #${question.id} from ${question.topic.name}.`;
+        renderQuestionLookup();
+    }
+
+    function renderCourseDetail() {
+        const course = selectedCourse();
+        if (!course) {
+            courseDetail.textContent = "Select a stored course to view its topics, question types, and questions.";
+            renderReferenceSelect(topicSelect, [], "Select a course first");
+            renderReferenceSelect(questionTypeSelect, [], "Select a course first");
+            return;
+        }
+
+        renderReferenceSelect(topicSelect, course.topics || [], "Select a topic");
+        renderReferenceSelect(questionTypeSelect, course.question_types || [], "Select a question type");
+
+        const topicNames = (course.topics || []).map((topic) => topic.name).join(", ") || "none";
+        const typeNames = (course.question_types || []).map((item) => item.name).join(", ") || "none";
+        courseDetail.innerHTML = `
+            <strong>${course.name}</strong><br>
+            Topics: ${topicNames}<br>
+            Question types: ${typeNames}<br>
+            Stored questions: ${course.question_count}
+        `;
+    }
+
+    function renderCourses(courses) {
+        const previousCourseId = courseSelect.value;
+        courseSelect.innerHTML = '<option value="">Select a course</option>';
+
+        courses.forEach((course) => {
+            const option = document.createElement("option");
+            option.value = String(course.id);
+            option.textContent = `${course.name} (${course.question_count} questions)`;
+            courseSelect.appendChild(option);
+        });
+
+        if (courses.some((course) => String(course.id) === previousCourseId)) {
+            courseSelect.value = previousCourseId;
+        } else if (courses.length === 1) {
+            courseSelect.value = String(courses[0].id);
+        }
+
+        renderCourseDetail();
+    }
+
+    function renderQuestionLookup() {
+        const questions = filteredQuestions();
+        questionLookupSelect.innerHTML = "";
+
+        if (!availableQuestions.length) {
+            const option = document.createElement("option");
+            option.value = "";
+            option.textContent = "No questions loaded yet.";
+            questionLookupSelect.appendChild(option);
+            questionLookupSelect.disabled = true;
+            questionLookupSelect.size = 4;
+            questionLookupDetail.textContent = "Load questions for the selected course to search and select one.";
+            return;
+        }
+
+        if (!questions.length) {
+            const option = document.createElement("option");
+            option.value = "";
+            option.textContent = "No questions match the current search.";
+            questionLookupSelect.appendChild(option);
+            questionLookupSelect.disabled = true;
+            questionLookupSelect.size = 4;
+            questionLookupDetail.textContent = `No matches for "${questionSearchInput.value.trim()}".`;
+            return;
+        }
+
+        questionLookupSelect.disabled = false;
+        questionLookupSelect.size = Math.min(Math.max(questions.length, 4), 10);
+
+        questions.forEach((question) => {
+            const option = document.createElement("option");
+            option.value = String(question.id);
+            option.textContent = `#${question.id} | ${question.question_text}`;
+            questionLookupSelect.appendChild(option);
+        });
+
+        if (questions.some((question) => question.id === selectedQuestionId)) {
+            questionLookupSelect.value = String(selectedQuestionId);
+        }
+
+        questionLookupDetail.textContent = `Showing ${questions.length} of ${availableQuestions.length} question(s) for this course.`;
+    }
+
+    function readQuestionPayload() {
+        const course = selectedCourse();
+        if (!course) {
+            throw new Error("Select a course first.");
+        }
+
+        const topicId = topicSelect.value.trim();
+        const questionTypeId = questionTypeSelect.value.trim();
+        const questionText = questionTextInput.value.trim();
+        const maxMarks = maxMarksInput.value.trim();
+
+        if (!topicId) {
+            throw new Error("Choose a topic.");
+        }
+        if (!questionTypeId) {
+            throw new Error("Choose a question type.");
+        }
+        if (!questionText) {
+            throw new Error("Question text must not be blank.");
+        }
+        if (!maxMarks || Number(maxMarks) <= 0 || !Number.isInteger(Number(maxMarks))) {
+            throw new Error("Max marks must be a positive integer.");
+        }
+
+        return {
+            topic_id: Number(topicId),
+            question_type_id: Number(questionTypeId),
+            question_text: questionText,
+            max_marks: Number(maxMarks),
+            sample_answer: sampleAnswerInput.value.trim(),
+            example_answer: exampleAnswerInput.value.trim(),
+            marking_notes: markingNotesInput.value.trim()
+        };
+    }
+
+    async function loadCourses({ loadSelectedCourseQuestions = true } = {}) {
+        if (!currentToken()) {
+            throw new Error("Provide a token first.");
+        }
+        const payload = await fetchJson(config.coursesUrl);
+        availableCourses = payload.courses || [];
+        renderCourses(availableCourses);
+        setStatus(courseStatus, `Loaded ${availableCourses.length} course(s).`);
+        if (loadSelectedCourseQuestions && selectedCourse()) {
+            await loadQuestions();
+        } else if (!selectedCourse()) {
+            availableQuestions = [];
+            questionSearchInput.value = "";
+            resetForm();
+            setStatus(questionListStatus, "Select a course to load questions.");
+        }
+        return availableCourses;
+    }
+
+    async function loadQuestions() {
+        if (!currentToken()) {
+            throw new Error("Provide a token first.");
+        }
+
+        const course = selectedCourse();
+        if (!course) {
+            throw new Error("Select a course first.");
+        }
+
+        const payload = await fetchJson(courseQuestionsUrl(course.id));
+        availableQuestions = payload.questions || [];
+        if (!selectedQuestion()) {
+            clearQuestionSelection();
+        }
+        renderQuestionLookup();
+        renderCourseDetail();
+        setStatus(questionListStatus, `Loaded ${availableQuestions.length} question(s) from ${course.name}.`);
+    }
+
+    async function createQuestion() {
+        const course = selectedCourse();
+        if (!course) {
+            throw new Error("Select a course first.");
+        }
+
+        const payload = readQuestionPayload();
+        const response = await fetchJson(courseQuestionsUrl(course.id), {
+            method: "POST",
+            body: JSON.stringify(payload)
+        });
+
+        resetForm();
+        setStatus(editorStatus, `Added question #${response.question.id}.`);
+        await loadCourses({ loadSelectedCourseQuestions: false });
+        courseSelect.value = String(course.id);
+        renderCourseDetail();
+        await loadQuestions();
+        populateFormFromQuestion(response.question);
+    }
+
+    async function updateQuestion() {
+        const course = selectedCourse();
+        if (!course) {
+            throw new Error("Select a course first.");
+        }
+        if (!selectedQuestionId) {
+            throw new Error("Select a stored question to update.");
+        }
+
+        const payload = readQuestionPayload();
+        const response = await fetchJson(courseQuestionDetailUrl(course.id, selectedQuestionId), {
+            method: "PATCH",
+            body: JSON.stringify(payload)
+        });
+
+        setStatus(editorStatus, `Updated question #${response.question.id}.`);
+        await loadCourses({ loadSelectedCourseQuestions: false });
+        courseSelect.value = String(course.id);
+        renderCourseDetail();
+        await loadQuestions();
+        populateFormFromQuestion(response.question);
+    }
+
+    document.getElementById("use-session-button").addEventListener("click", async () => {
+        setStatus(tokenStatus, "Requesting session token...");
+        try {
+            const payload = await fetchJson(config.tokenUrl, { method: "POST", body: JSON.stringify({}) });
+            tokenField.value = payload.token;
+            storeToken();
+            setStatus(tokenStatus, `Loaded token for ${payload.username}.`);
+            setStatus(courseStatus, "Loading courses...");
+            await loadCourses();
+        } catch (error) {
+            setStatus(tokenStatus, error.message, true);
+        }
+    });
+
+    document.getElementById("load-courses-button").addEventListener("click", () => {
+        storeToken();
+        setStatus(courseStatus, "Loading courses...");
+        loadCourses().catch((error) => setStatus(courseStatus, error.message, true));
+    });
+
+    document.getElementById("load-questions-button").addEventListener("click", () => {
+        storeToken();
+        setStatus(questionListStatus, "Loading questions...");
+        loadQuestions().catch((error) => setStatus(questionListStatus, error.message, true));
+    });
+
+    document.getElementById("create-question-button").addEventListener("click", () => {
+        storeToken();
+        setStatus(editorStatus, "Adding question...");
+        createQuestion().catch((error) => setStatus(editorStatus, error.message, true));
+    });
+
+    document.getElementById("update-question-button").addEventListener("click", () => {
+        storeToken();
+        setStatus(editorStatus, "Updating question...");
+        updateQuestion().catch((error) => setStatus(editorStatus, error.message, true));
+    });
+
+    document.getElementById("reset-form-button").addEventListener("click", () => {
+        resetForm();
+        setStatus(editorStatus, "Editor reset. Ready to add a question.");
+    });
+
+    questionSearchInput.addEventListener("input", () => {
+        renderQuestionLookup();
+    });
+
+    questionLookupSelect.addEventListener("change", () => {
+        const questionId = Number(questionLookupSelect.value);
+        const question = availableQuestions.find((item) => item.id === questionId);
+        if (!question) {
+            return;
+        }
+        populateFormFromQuestion(question);
+        setStatus(editorStatus, `Loaded question #${question.id} into the editor.`);
+    });
+
+    courseSelect.addEventListener("change", () => {
+        availableQuestions = [];
+        questionSearchInput.value = "";
+        renderCourseDetail();
+        resetForm();
+        if (!selectedCourse()) {
+            setStatus(questionListStatus, "Select a course to load questions.");
+            return;
+        }
+        setStatus(questionListStatus, "Loading questions...");
+        loadQuestions().catch((error) => setStatus(questionListStatus, error.message, true));
+    });
+
+    tokenField.addEventListener("change", storeToken);
+    renderQuestionLookup();
+
+    if (currentToken()) {
+        loadCourses().catch((error) => setStatus(courseStatus, error.message, true));
+    }
+</script>
+</body>
+</html>

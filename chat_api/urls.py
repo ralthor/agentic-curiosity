@@ -1,7 +1,10 @@
 from django.urls import path
 
 from .views import (
+    attempts_view,
     chat_view,
+    course_question_detail_view,
+    course_questions_view,
     courses_view,
     create_session_view,
     import_course_questions_view,
@@ -14,7 +17,14 @@ urlpatterns = [
     path("login/", login_view, name="chat-api-login"),
     path("token/", token_view, name="chat-api-token"),
     path("courses/", courses_view, name="chat-api-courses"),
+    path("courses/<int:course_id>/questions/", course_questions_view, name="chat-api-course-questions"),
+    path(
+        "courses/<int:course_id>/questions/<int:question_id>/",
+        course_question_detail_view,
+        name="chat-api-course-question-detail",
+    ),
     path("courses/<int:course_id>/questions/import/", import_course_questions_view, name="chat-api-import-course-questions"),
+    path("attempts/", attempts_view, name="chat-api-attempts"),
     path("sessions/", create_session_view, name="chat-api-create-session"),
     path("sessions/<int:session_id>/", session_detail_view, name="chat-api-session-detail"),
     path("chat/", chat_view, name="chat-api-chat"),
