@@ -34,6 +34,8 @@ Settings are loaded from environment variables and `.env`.
 - `AI_CHAT_ANSWERER_MODEL`: optional model override used by hint and mark calls
 - `AI_CHAT_MODEL`: fallback model when `AI_CHAT_ANSWERER_MODEL` is unset
 - `AI_CHAT_LOG_LEVEL`: optional logger level for the `ai_chat` logger
+- `LOGIN_RATE_LIMIT_ATTEMPTS`: optional failed-login threshold for `POST /api/chat/login/` before the endpoint returns `429` 
+- `LOGIN_RATE_LIMIT_WINDOW_SECONDS`: optional sliding window for login throttling in seconds
 
 If neither `AI_CHAT_ANSWERER_MODEL` nor `AI_CHAT_MODEL` is set, the tutoring runtime falls back to `gpt-5.4-mini`.
 
@@ -127,7 +129,7 @@ sh bootstrap.sh
 The script writes `compose.yml` and `nginx.conf`, creates the `docker-data/` and `redis-data/` directories, validates the generated Compose file, and starts three services:
 
 - `web`: your published app image, running Django migrations and Gunicorn
-- `redis`: internal Redis service for later cache/rate-limit work
+- `redis`: internal Redis service reserved for future cache or distributed rate-limit work
 - `nginx`: the only public-facing container, proxying to `web`
 
 If you only want the files without starting containers, run:
@@ -274,7 +276,7 @@ Base path: `/api/chat/`
 
 ### Authentication
 
-- `POST /login/`: authenticate with Django username/password, create a browser session, and return an API token
+- `POST /login/`: authenticate with Django username/password, create a browser session, and return an API token; repeated failed attempts for the same username and client are throttled with `429`
 - `POST /token/`: return the current browser session's token; this requires an already-authenticated Django session
 
 ### Courses

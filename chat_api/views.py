@@ -15,6 +15,13 @@ from ai_chat.models import ChatSession, QuestionAttempt
 from .auth import get_user_from_authorization_header
 from .models import ApiToken, Course, CourseQuestion, CourseTopic, QuestionType
 from .progress import build_course_progress, serialize_active_question
+from .rate_limits import (
+    build_login_rate_limit_response,
+    clear_failed_logins,
+    get_rate_limit_now,
+    get_login_rate_limit_status,
+    register_failed_login,
+)
 from .services import create_session, get_session, interact_with_session
 
 
@@ -281,10 +288,17 @@ def login_view(request):
     if not username or not isinstance(password, str) or not password:
         return _json_error("username and password are required.", status=400)
 
+    rate_limit_now = get_rate_limit_now()
+    rate_limit_status = get_login_rate_limit_status(request=request, username=username, now=rate_limit_now)
+    if rate_limit_status.is_limited:
+        return build_login_rate_limit_response(rate_limit_status)
+
     user = authenticate(request, username=username, password=password)
     if user is None:
+        register_failed_login(request=request, username=username, now=rate_limit_now)
         return _json_error("Invalid username or password.", status=401)
 
+    clear_failed_logins(request=request, username=username)
     django_login(request, user)
     token = ApiToken.issue_for_user(user)
     return JsonResponse(

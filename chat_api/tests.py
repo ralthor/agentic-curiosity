@@ -4,12 +4,12 @@ from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
-from django.test import SimpleTestCase, TestCase
+from django.test import SimpleTestCase, TestCase, override_settings
 from django.utils import timezone
 
 from ai_chat.models import ChatSession, LearnerQuestionState, QuestionAttempt, QuestionPresentation
 
-from .models import ApiToken, Course, CourseQuestion, CourseTopic, QuestionType
+from .models import ApiToken, Course, CourseQuestion, CourseTopic, LoginRateLimit, QuestionType
 from .progress import build_course_progress, derive_leitner_score, schedule_due_at
 from .question_selector import select_next_question
 from .services import classify_interaction, create_session
@@ -215,6 +215,57 @@ class ChatApiTests(TestCase):
         self.assertEqual(payload["token"], token.key)
         self.assertEqual(payload["user_id"], self.user.pk)
         self.assertEqual(self.client.session["_auth_user_id"], str(self.user.pk))
+
+    @override_settings(LOGIN_RATE_LIMIT_ATTEMPTS=2, LOGIN_RATE_LIMIT_WINDOW_SECONDS=60)
+    def test_login_rate_limit_blocks_after_repeated_failed_attempts(self):
+        first_response = self._post_json("/api/chat/login/", {"username": "alice", "password": "wrong"})
+        second_response = self._post_json("/api/chat/login/", {"username": "alice", "password": "wrong"})
+        blocked_response = self._post_json("/api/chat/login/", {"username": "alice", "password": "wrong"})
+
+        self.assertEqual(first_response.status_code, 401)
+        self.assertEqual(second_response.status_code, 401)
+        self.assertEqual(blocked_response.status_code, 429)
+        self.assertIn("Too many login attempts.", blocked_response.json()["error"])
+        self.assertGreater(blocked_response.json()["retry_after_seconds"], 0)
+        self.assertEqual(blocked_response["Retry-After"], str(blocked_response.json()["retry_after_seconds"]))
+
+    @override_settings(LOGIN_RATE_LIMIT_ATTEMPTS=2, LOGIN_RATE_LIMIT_WINDOW_SECONDS=60)
+    def test_successful_login_clears_failed_attempts(self):
+        first_failure = self._post_json("/api/chat/login/", {"username": "alice", "password": "wrong"})
+        success_response = self._post_json("/api/chat/login/", {"username": "alice", "password": "wonderland"})
+
+        self.assertEqual(first_failure.status_code, 401)
+        self.assertEqual(success_response.status_code, 200)
+        self.assertFalse(LoginRateLimit.objects.exists())
+
+        second_failure = self._post_json("/api/chat/login/", {"username": "alice", "password": "wrong"})
+        third_failure = self._post_json("/api/chat/login/", {"username": "alice", "password": "wrong"})
+        blocked_response = self._post_json("/api/chat/login/", {"username": "alice", "password": "wrong"})
+
+        self.assertEqual(second_failure.status_code, 401)
+        self.assertEqual(third_failure.status_code, 401)
+        self.assertEqual(blocked_response.status_code, 429)
+
+    @override_settings(LOGIN_RATE_LIMIT_ATTEMPTS=2, LOGIN_RATE_LIMIT_WINDOW_SECONDS=20)
+    def test_login_rate_limit_expires_after_window(self):
+        start = timezone.now()
+        request_times = [
+            start,
+            start + timedelta(seconds=1),
+            start + timedelta(seconds=2),
+            start + timedelta(seconds=22),
+        ]
+
+        with patch("chat_api.views.get_rate_limit_now", side_effect=request_times):
+            first_response = self._post_json("/api/chat/login/", {"username": "alice", "password": "wrong"})
+            second_response = self._post_json("/api/chat/login/", {"username": "alice", "password": "wrong"})
+            blocked_response = self._post_json("/api/chat/login/", {"username": "alice", "password": "wrong"})
+            post_window_response = self._post_json("/api/chat/login/", {"username": "alice", "password": "wrong"})
+
+        self.assertEqual(first_response.status_code, 401)
+        self.assertEqual(second_response.status_code, 401)
+        self.assertEqual(blocked_response.status_code, 429)
+        self.assertEqual(post_window_response.status_code, 401)
 
     def test_courses_endpoint_creates_nested_course_content(self):
         token = ApiToken.issue_for_user(self.user)
