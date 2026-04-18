@@ -176,6 +176,7 @@ GitHub Actions now includes [.github/workflows/docker-image.yml](.github/workflo
 
 - pull requests to `master` build the image only
 - pushes to `master` build and push the image to Docker Hub
+- pushes to `master` then SSH to the VPS and redeploy the `web` service from the latest image
 
 To make the push step work:
 
@@ -184,8 +185,14 @@ To make the push step work:
 3. Add these GitHub repository secrets:
    - `DOCKERHUB_USERNAME`
    - `DOCKERHUB_TOKEN`
+   - `VPS_HOST`
+   - `VPS_USER`
+   - `VPS_PASSWORD`
+   - `VPS_DEPLOY_PATH`
 
 You do not need to push a placeholder image first. Creating the Docker Hub repository and configuring the GitHub secrets is enough.
+
+The deploy step assumes `VPS_DEPLOY_PATH` points at a directory that has already been bootstrapped using `deploy/bootstrap.sh`, so that directory already contains `.env`, `compose.yml`, and the persistent data folders. It connects over SSH, changes into `VPS_DEPLOY_PATH`, and runs `docker compose up -d --pull always web`. The server must have modern Docker Compose available as `docker compose`. The SSH user must either be able to run Docker directly, or have passwordless `sudo` for Docker commands. If your Docker Hub repository is private, make sure the server has already run `docker login` once.
 
 Useful pages:
 
