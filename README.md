@@ -58,9 +58,11 @@ Run the app with Docker Compose:
 docker compose up --build
 ```
 
-This uses [compose.yml](compose.yml) and stores the SQLite database on the host at `./docker-data/db.sqlite3` by bind-mounting `./docker-data` into the container as `/data`.
+This uses [compose.yml](compose.yml) and now mirrors the deployment stack structure: `web`, `redis`, and `nginx`. The `web` service is built from the repo root instead of pulling a published image. SQLite is stored on the host at `./docker-data/db.sqlite3` by bind-mounting `./docker-data` into the container as `/data`, and Redis persistence is stored under `./redis-data`.
 
-The local Compose file keeps the app on Django `runserver` and runs `python manage.py migrate` automatically before startup, so the mounted database is initialized on first boot.
+The local Compose file now runs Gunicorn behind Nginx, and the container entrypoint still runs `python manage.py migrate` automatically before startup, so the mounted database is initialized on first boot.
+
+By default the local root Compose stack binds host port `80` to Nginx. If you want a different local port such as `8000`, set `NGINX_HTTP_PORT=8000` in `.env` before starting the stack.
 
 If you want to run without Compose, mount a host directory and point Django at it explicitly:
 
@@ -69,7 +71,7 @@ docker build -t agentic-curiosity .
 docker run --rm -it -p 8000:8000 --env-file .env -e DJANGO_DB_PATH=/data/db.sqlite3 -v ./docker-data:/data agentic-curiosity
 ```
 
-The local Compose path still uses `runserver`, which is fine for simple testing and CI but is not a hardened production web stack.
+The local Compose path now uses the same Gunicorn-plus-Nginx shape as deployment, but it builds the `web` image from the working tree.
 
 ### Server Deployment With Docker
 
