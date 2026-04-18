@@ -1,4 +1,11 @@
-from django.test import SimpleTestCase
+from datetime import timedelta
+from unittest.mock import patch
+
+from django.contrib.auth import get_user_model
+from django.test import SimpleTestCase, TestCase, override_settings
+from django.utils import timezone
+
+from chat_api.models import LoginRateLimit
 
 
 class HomePageTests(SimpleTestCase):
@@ -42,3 +49,64 @@ class HomePageTests(SimpleTestCase):
         self.assertContains(response, "Load Attempts")
         self.assertContains(response, "/api/chat/attempts/")
         self.assertContains(response, "let attempts = [];")
+
+
+class AdminLoginRateLimitTests(TestCase):
+    def setUp(self):
+        self.admin_user = get_user_model().objects.create_superuser(
+            username="admin",
+            email="admin@example.com",
+            password="wonderland",
+        )
+
+    @override_settings(LOGIN_RATE_LIMIT_ATTEMPTS=2, LOGIN_RATE_LIMIT_WINDOW_SECONDS=60)
+    def test_admin_login_rate_limit_blocks_after_repeated_failed_attempts(self):
+        first_response = self.client.post("/admin/login/", {"username": "admin", "password": "wrong"})
+        second_response = self.client.post("/admin/login/", {"username": "admin", "password": "wrong"})
+        blocked_response = self.client.post("/admin/login/", {"username": "admin", "password": "wrong"})
+
+        self.assertEqual(first_response.status_code, 200)
+        self.assertEqual(second_response.status_code, 200)
+        self.assertEqual(blocked_response.status_code, 429)
+        self.assertTemplateUsed(blocked_response, "admin/login.html")
+        self.assertContains(blocked_response, "Too many login attempts. Try again in", status_code=429)
+        self.assertGreater(int(blocked_response["Retry-After"]), 0)
+
+    @override_settings(LOGIN_RATE_LIMIT_ATTEMPTS=2, LOGIN_RATE_LIMIT_WINDOW_SECONDS=60)
+    def test_successful_admin_login_clears_failed_attempts(self):
+        first_failure = self.client.post("/admin/login/", {"username": "admin", "password": "wrong"})
+        success_response = self.client.post("/admin/login/", {"username": "admin", "password": "wonderland"})
+
+        self.assertEqual(first_failure.status_code, 200)
+        self.assertEqual(success_response.status_code, 302)
+        self.assertFalse(LoginRateLimit.objects.exists())
+
+        self.client.logout()
+        second_failure = self.client.post("/admin/login/", {"username": "admin", "password": "wrong"})
+        third_failure = self.client.post("/admin/login/", {"username": "admin", "password": "wrong"})
+        blocked_response = self.client.post("/admin/login/", {"username": "admin", "password": "wrong"})
+
+        self.assertEqual(second_failure.status_code, 200)
+        self.assertEqual(third_failure.status_code, 200)
+        self.assertEqual(blocked_response.status_code, 429)
+
+    @override_settings(LOGIN_RATE_LIMIT_ATTEMPTS=2, LOGIN_RATE_LIMIT_WINDOW_SECONDS=20)
+    def test_admin_login_rate_limit_expires_after_window(self):
+        start = timezone.now()
+        request_times = [
+            start,
+            start + timedelta(seconds=1),
+            start + timedelta(seconds=2),
+            start + timedelta(seconds=22),
+        ]
+
+        with patch("core.views.get_rate_limit_now", side_effect=request_times):
+            first_response = self.client.post("/admin/login/", {"username": "admin", "password": "wrong"})
+            second_response = self.client.post("/admin/login/", {"username": "admin", "password": "wrong"})
+            blocked_response = self.client.post("/admin/login/", {"username": "admin", "password": "wrong"})
+            post_window_response = self.client.post("/admin/login/", {"username": "admin", "password": "wrong"})
+
+        self.assertEqual(first_response.status_code, 200)
+        self.assertEqual(second_response.status_code, 200)
+        self.assertEqual(blocked_response.status_code, 429)
+        self.assertEqual(post_window_response.status_code, 200)

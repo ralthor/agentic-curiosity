@@ -1,12 +1,39 @@
 services:
   web:
     build: .
-    ports:
-      - "8000:8000"
+    restart: unless-stopped
     env_file:
       - .env
     environment:
-      DJANGO_APP_SERVER: runserver
+      DJANGO_APP_SERVER: gunicorn
       DJANGO_DB_PATH: /data/db.sqlite3
+      DJANGO_STATIC_ROOT: /data/static
+      DJANGO_USE_X_FORWARDED_HOST: "true"
+      DJANGO_TRUST_X_FORWARDED_PROTO: "true"
+      GUNICORN_BIND: 0.0.0.0:8000
     volumes:
       - ./docker-data:/data
+    depends_on:
+      - redis
+    expose:
+      - "8000"
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - ./redis-data:/data
+    expose:
+      - "6379"
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      - web
+    ports:
+      - "${NGINX_HTTP_PORT:-80}:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./docker-data/static:/srv/static:ro
