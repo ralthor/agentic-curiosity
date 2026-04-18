@@ -25,6 +25,7 @@ def home(request):
             "chat_api_sessions_url": reverse("chat-api-create-session"),
             "chat_api_chat_url": reverse("chat-api-chat"),
             "course_topics_page_url": reverse("course-topics"),
+            "course_questions_page_url": reverse("course-questions"),
             "attempts_page_url": reverse("attempts"),
         },
     )
@@ -38,6 +39,21 @@ def course_topics(request):
             "chat_api_token_url": reverse("chat-api-token"),
             "chat_api_courses_url": reverse("chat-api-courses"),
             "home_url": reverse("home"),
+            "course_questions_page_url": reverse("course-questions"),
+        },
+    )
+
+
+def course_questions(request):
+    return render(
+        request,
+        "core/course_questions.html",
+        {
+            "chat_api_token_url": reverse("chat-api-token"),
+            "chat_api_courses_url": reverse("chat-api-courses"),
+            "home_url": reverse("home"),
+            "course_topics_page_url": reverse("course-topics"),
+            "attempts_page_url": reverse("attempts"),
         },
     )
 
@@ -52,6 +68,7 @@ def attempts(request):
             "chat_api_attempts_url": reverse("chat-api-attempts"),
             "home_url": reverse("home"),
             "course_topics_page_url": reverse("course-topics"),
+            "course_questions_page_url": reverse("course-questions"),
         },
     )
 

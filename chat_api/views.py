@@ -7,6 +7,7 @@ from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.db.models import Count
 from django.http import JsonResponse
+from django.utils.text import slugify
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
@@ -140,6 +141,30 @@ def _serialize_course(course: Course) -> dict[str, object]:
         ],
         "created_at": course.created_at.isoformat(),
         "updated_at": course.updated_at.isoformat(),
+    }
+
+
+def _serialize_question(question: CourseQuestion) -> dict[str, object]:
+    return {
+        "id": question.pk,
+        "question_text": question.question_text,
+        "max_marks": question.max_marks,
+        "sample_answer": question.sample_answer,
+        "example_answer": question.example_answer,
+        "marking_notes": question.marking_notes,
+        "import_key": question.import_key,
+        "topic": {
+            "id": question.topic.pk,
+            "name": question.topic.name,
+            "import_key": question.topic.import_key,
+        },
+        "question_type": {
+            "id": question.question_type.pk,
+            "name": question.question_type.name,
+            "import_key": question.question_type.import_key,
+        },
+        "created_at": question.created_at.isoformat(),
+        "updated_at": question.updated_at.isoformat(),
     }
 
 
@@ -288,24 +313,60 @@ def _create_course_from_payload(payload: dict) -> Course:
 def _create_questions_for_course(*, course: Course, questions_payload: list[dict]) -> int:
     created_count = 0
     for question_payload in questions_payload:
-        max_marks = _parse_positive_int(question_payload.get("max_marks"))
-        if max_marks is None:
-            raise ValueError("Each question must include a positive integer max_marks.")
-        question = CourseQuestion(
-            course=course,
-            topic=_resolve_course_topic_for_payload(course=course, item=question_payload),
-            question_type=_resolve_question_type_for_payload(course=course, item=question_payload),
-            question_text=_require_non_blank_string(question_payload, "question_text"),
-            max_marks=max_marks,
-            sample_answer=_optional_string(question_payload, "sample_answer"),
-            example_answer=_optional_string(question_payload, "example_answer"),
-            marking_notes=_optional_string(question_payload, "marking_notes"),
-            import_key=_optional_string(question_payload, "import_key"),
-        )
+        question = CourseQuestion(course=course)
+        _apply_question_payload(question=question, course=course, payload=question_payload, partial=False)
         question.full_clean()
         question.save()
         created_count += 1
     return created_count
+
+
+def _generate_question_import_key(*, course: Course, question_text: str, exclude_question_id: int | None = None) -> str:
+    base_key = slugify(question_text)[:80] or "question"
+    existing_keys = set(
+        course.questions.exclude(pk=exclude_question_id).values_list("import_key", flat=True)
+    )
+    if base_key not in existing_keys:
+        return base_key
+
+    suffix = 2
+    while True:
+        candidate = f"{base_key}-{suffix}"
+        if candidate not in existing_keys:
+            return candidate
+        suffix += 1
+
+
+def _apply_question_payload(*, question: CourseQuestion, course: Course, payload: dict, partial: bool) -> None:
+    question.course = course
+
+    if not partial or any(field in payload for field in ("topic_id", "topic_import_key", "topic_name")):
+        question.topic = _resolve_course_topic_for_payload(course=course, item=payload)
+
+    if not partial or any(
+        field in payload for field in ("question_type_id", "question_type_import_key", "question_type_name")
+    ):
+        question.question_type = _resolve_question_type_for_payload(course=course, item=payload)
+
+    if not partial or "question_text" in payload:
+        question.question_text = _require_non_blank_string(payload, "question_text")
+
+    if not partial or "max_marks" in payload:
+        max_marks = _parse_positive_int(payload.get("max_marks"))
+        if max_marks is None:
+            raise ValueError("Each question must include a positive integer max_marks.")
+        question.max_marks = max_marks
+
+    for field_name in ("sample_answer", "example_answer", "marking_notes", "import_key"):
+        if not partial or field_name in payload:
+            setattr(question, field_name, _optional_string(payload, field_name))
+
+    if not question.import_key:
+        question.import_key = _generate_question_import_key(
+            course=course,
+            question_text=question.question_text,
+            exclude_question_id=question.pk,
+        )
 
 
 def _resolve_selector_override_topic(course: Course, payload: dict) -> CourseTopic | None:
@@ -421,6 +482,70 @@ def import_course_questions_view(request, course_id: int):
         },
         status=201,
     )
+
+
+@csrf_exempt
+@require_http_methods(["GET", "POST"])
+def course_questions_view(request, course_id: int):
+    _user, error_response = _require_token_user(request)
+    if error_response is not None:
+        return error_response
+
+    course = Course.objects.filter(pk=course_id).first()
+    if course is None:
+        return _json_error("Course not found.", status=404)
+
+    if request.method == "GET":
+        questions = (
+            course.questions.select_related("topic", "question_type")
+            .order_by("topic__name", "id")
+        )
+        return JsonResponse(
+            {
+                "course": _serialize_course(course),
+                "questions": [_serialize_question(question) for question in questions],
+            }
+        )
+
+    try:
+        payload = _load_json_body(request)
+        question = CourseQuestion(course=course)
+        _apply_question_payload(question=question, course=course, payload=payload, partial=False)
+        question.full_clean()
+        question.save()
+    except (IntegrityError, ValidationError, ValueError) as exc:
+        return _json_error(str(exc), status=400)
+
+    return JsonResponse({"question": _serialize_question(question)}, status=201)
+
+
+@csrf_exempt
+@require_http_methods(["GET", "PATCH"])
+def course_question_detail_view(request, course_id: int, question_id: int):
+    _user, error_response = _require_token_user(request)
+    if error_response is not None:
+        return error_response
+
+    question = (
+        CourseQuestion.objects.select_related("course", "topic", "question_type")
+        .filter(pk=question_id, course_id=course_id)
+        .first()
+    )
+    if question is None:
+        return _json_error("Question not found.", status=404)
+
+    if request.method == "GET":
+        return JsonResponse({"question": _serialize_question(question)})
+
+    try:
+        payload = _load_json_body(request)
+        _apply_question_payload(question=question, course=question.course, payload=payload, partial=True)
+        question.full_clean()
+        question.save()
+    except (IntegrityError, ValidationError, ValueError) as exc:
+        return _json_error(str(exc), status=400)
+
+    return JsonResponse({"question": _serialize_question(question)})
 
 
 @csrf_exempt
