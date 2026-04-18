@@ -105,34 +105,22 @@
             line-height: 1.5;
         }
 
-        .question-list {
-            display: grid;
-            gap: 10px;
+        .lookup-panel {
             margin-top: 14px;
-        }
-
-        .question-card {
             border: 1px solid var(--line);
             border-radius: 14px;
             padding: 14px;
             background: #fffefb;
-            cursor: pointer;
         }
 
-        .question-card.selected {
-            border-color: var(--accent);
-            background: var(--accent-soft);
-            box-shadow: inset 0 0 0 1px rgba(122, 24, 56, 0.18);
+        .lookup-select {
+            min-height: 220px;
+            font-family: Consolas, monospace;
         }
 
-        .question-card strong {
-            display: block;
-            margin-bottom: 8px;
-        }
-
-        .question-card .meta {
+        .lookup-hint {
+            margin-top: 10px;
             color: var(--muted);
-            font-size: 0.95rem;
             line-height: 1.45;
         }
 
@@ -205,10 +193,18 @@
             </section>
 
             <section class="panel">
-                <h2>Stored Questions</h2>
-                <p>Click a question card to load it into the editor for updating.</p>
-                <div class="question-list" id="question-list">
-                    <div class="question-card">No questions loaded yet.</div>
+                <h2>Question Lookup</h2>
+                <p>Search by part of the question text or choose directly from the stored-question list, then load that question into the editor for updating.</p>
+                <label class="field-label" style="margin-top: 14px;">
+                    Search Question Text
+                    <input id="question-search-input" placeholder="Type part of the question text">
+                </label>
+                <div class="lookup-panel">
+                    <label class="field-label">
+                        Matching Questions
+                        <select id="question-lookup-select" class="lookup-select" size="8"></select>
+                    </label>
+                    <div class="lookup-hint" id="question-lookup-detail">No questions loaded yet.</div>
                 </div>
                 <div class="status" id="question-list-status">Select a course and load questions.</div>
             </section>
@@ -282,7 +278,9 @@
     const editorStatus = document.getElementById("editor-status");
     const courseSelect = document.getElementById("course-select");
     const courseDetail = document.getElementById("course-detail");
-    const questionList = document.getElementById("question-list");
+    const questionSearchInput = document.getElementById("question-search-input");
+    const questionLookupSelect = document.getElementById("question-lookup-select");
+    const questionLookupDetail = document.getElementById("question-lookup-detail");
     const editorDetail = document.getElementById("editor-detail");
     const topicSelect = document.getElementById("topic-select");
     const questionTypeSelect = document.getElementById("question-type-select");
@@ -317,6 +315,14 @@
 
     function selectedQuestion() {
         return availableQuestions.find((question) => question.id === selectedQuestionId) || null;
+    }
+
+    function filteredQuestions() {
+        const query = questionSearchInput.value.trim().toLowerCase();
+        if (!query) {
+            return availableQuestions;
+        }
+        return availableQuestions.filter((question) => question.question_text.toLowerCase().includes(query));
     }
 
     function courseQuestionsUrl(courseId) {
@@ -372,7 +378,7 @@
         sampleAnswerInput.value = "";
         exampleAnswerInput.value = "";
         markingNotesInput.value = "";
-        renderQuestions(availableQuestions);
+        renderQuestionLookup();
     }
 
     function populateFormFromQuestion(question) {
@@ -385,7 +391,7 @@
         exampleAnswerInput.value = question.example_answer || "";
         markingNotesInput.value = question.marking_notes || "";
         editorDetail.textContent = `Editing question #${question.id} from ${question.topic.name}.`;
-        renderQuestions(availableQuestions);
+        renderQuestionLookup();
     }
 
     function renderCourseDetail() {
@@ -430,30 +436,47 @@
         renderCourseDetail();
     }
 
-    function renderQuestions(questions) {
-        questionList.innerHTML = "";
-        if (!questions.length) {
-            questionList.innerHTML = '<div class="question-card">No questions found for this course.</div>';
+    function renderQuestionLookup() {
+        const questions = filteredQuestions();
+        questionLookupSelect.innerHTML = "";
+
+        if (!availableQuestions.length) {
+            const option = document.createElement("option");
+            option.value = "";
+            option.textContent = "No questions loaded yet.";
+            questionLookupSelect.appendChild(option);
+            questionLookupSelect.disabled = true;
+            questionLookupSelect.size = 4;
+            questionLookupDetail.textContent = "Load questions for the selected course to search and select one.";
             return;
         }
 
+        if (!questions.length) {
+            const option = document.createElement("option");
+            option.value = "";
+            option.textContent = "No questions match the current search.";
+            questionLookupSelect.appendChild(option);
+            questionLookupSelect.disabled = true;
+            questionLookupSelect.size = 4;
+            questionLookupDetail.textContent = `No matches for "${questionSearchInput.value.trim()}".`;
+            return;
+        }
+
+        questionLookupSelect.disabled = false;
+        questionLookupSelect.size = Math.min(Math.max(questions.length, 4), 10);
+
         questions.forEach((question) => {
-            const card = document.createElement("div");
-            card.className = "question-card";
-            if (question.id === selectedQuestionId) {
-                card.classList.add("selected");
-            }
-            card.innerHTML = `
-                <strong>#${question.id} ${question.question_text}</strong>
-                <div class="meta">
-                    Topic: ${question.topic.name}<br>
-                    Type: ${question.question_type.name}<br>
-                    Max marks: ${question.max_marks}
-                </div>
-            `;
-            card.addEventListener("click", () => populateFormFromQuestion(question));
-            questionList.appendChild(card);
+            const option = document.createElement("option");
+            option.value = String(question.id);
+            option.textContent = `#${question.id} | ${question.question_text}`;
+            questionLookupSelect.appendChild(option);
         });
+
+        if (questions.some((question) => question.id === selectedQuestionId)) {
+            questionLookupSelect.value = String(selectedQuestionId);
+        }
+
+        questionLookupDetail.textContent = `Showing ${questions.length} of ${availableQuestions.length} question(s) for this course.`;
     }
 
     function readQuestionPayload() {
@@ -503,6 +526,7 @@
             await loadQuestions();
         } else if (!selectedCourse()) {
             availableQuestions = [];
+            questionSearchInput.value = "";
             resetForm();
             setStatus(questionListStatus, "Select a course to load questions.");
         }
@@ -524,7 +548,7 @@
         if (!selectedQuestion()) {
             clearQuestionSelection();
         }
-        renderQuestions(availableQuestions);
+        renderQuestionLookup();
         renderCourseDetail();
         setStatus(questionListStatus, `Loaded ${availableQuestions.length} question(s) from ${course.name}.`);
     }
@@ -616,8 +640,23 @@
         setStatus(editorStatus, "Editor reset. Ready to add a question.");
     });
 
+    questionSearchInput.addEventListener("input", () => {
+        renderQuestionLookup();
+    });
+
+    questionLookupSelect.addEventListener("change", () => {
+        const questionId = Number(questionLookupSelect.value);
+        const question = availableQuestions.find((item) => item.id === questionId);
+        if (!question) {
+            return;
+        }
+        populateFormFromQuestion(question);
+        setStatus(editorStatus, `Loaded question #${question.id} into the editor.`);
+    });
+
     courseSelect.addEventListener("change", () => {
         availableQuestions = [];
+        questionSearchInput.value = "";
         renderCourseDetail();
         resetForm();
         if (!selectedCourse()) {
@@ -629,6 +668,7 @@
     });
 
     tokenField.addEventListener("change", storeToken);
+    renderQuestionLookup();
 
     if (currentToken()) {
         loadCourses().catch((error) => setStatus(courseStatus, error.message, true));

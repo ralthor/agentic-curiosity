@@ -57,6 +57,8 @@ class HomePageTests(SimpleTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTemplateUsed(response, "core/course_questions.html")
         self.assertContains(response, "Course Questions")
+        self.assertContains(response, "Question Lookup")
+        self.assertContains(response, "Search Question Text")
         self.assertContains(response, "Add Question")
         self.assertContains(response, "Update Question")
         self.assertContains(response, "Questions load automatically for the selected course.")
@@ -64,6 +66,8 @@ class HomePageTests(SimpleTestCase):
         self.assertNotContains(response, "Import Key")
         self.assertContains(response, "/api/chat/courses/")
         self.assertContains(response, "loadSelectedCourseQuestions = true")
+        self.assertContains(response, "function filteredQuestions()")
+        self.assertContains(response, "question-lookup-select")
         self.assertContains(response, "let selectedQuestionId = null;")
 
 
