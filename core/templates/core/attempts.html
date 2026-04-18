@@ -189,6 +189,40 @@
             background: rgba(255, 253, 248, 0.9);
         }
 
+        .photo-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 12px;
+            margin-top: 12px;
+        }
+
+        .photo-card {
+            border: 1px solid var(--line);
+            border-radius: 14px;
+            padding: 10px;
+            background: #fffaf2;
+        }
+
+        .photo-card img {
+            width: 100%;
+            aspect-ratio: 4 / 3;
+            object-fit: cover;
+            border-radius: 10px;
+            border: 1px solid var(--line);
+            background: #f8f1e7;
+        }
+
+        .photo-card strong,
+        .photo-card small {
+            display: block;
+            margin-top: 8px;
+        }
+
+        .photo-card small {
+            color: var(--muted);
+            line-height: 1.4;
+        }
+
         a {
             color: var(--accent);
         }
@@ -328,6 +362,24 @@
         return `<p>${escapeHtml(text).replaceAll("\n", "<br>")}</p>`;
     }
 
+    function renderPhotoGallery(photos) {
+        if (!Array.isArray(photos) || !photos.length) {
+            return "<p>No answer photos were attached to this attempt.</p>";
+        }
+        return `
+            <div class="photo-grid">
+                ${photos.map((photo) => `
+                    <div class="photo-card">
+                        <img src="${escapeHtml(photo.content_url)}" alt="${escapeHtml(photo.filename || "Answer photo")}">
+                        <strong>${escapeHtml(photo.filename || `Photo ${photo.display_order || ""}`)}</strong>
+                        <small>${escapeHtml(photo.content_type || "")} | ${escapeHtml(photo.byte_size || 0)} bytes</small>
+                        ${photo.extracted_text ? `<small><strong>OCR text</strong>${renderMarkdown(photo.extracted_text)}</small>` : ""}
+                    </div>
+                `).join("")}
+            </div>
+        `;
+    }
+
     function formatDate(value) {
         if (!value) {
             return "Unknown time";
@@ -400,6 +452,7 @@
             const responseBody = attempt.model_response_text
                 ? renderMarkdown(attempt.model_response_text)
                 : "<p>No model response stored.</p>";
+            const photoBody = renderPhotoGallery(attempt.photos || []);
 
             return `
                 <article class="attempt-card">
@@ -425,6 +478,10 @@
                         <div class="section-block">
                             <strong>Model Response</strong>
                             <div class="markdown-content">${responseBody}</div>
+                        </div>
+                        <div class="section-block">
+                            <strong>Attached Photos</strong>
+                            <div class="markdown-content">${photoBody}</div>
                         </div>
                     </div>
                 </article>

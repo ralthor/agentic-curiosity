@@ -24,6 +24,8 @@ def home(request):
             "chat_api_courses_url": reverse("chat-api-courses"),
             "chat_api_sessions_url": reverse("chat-api-create-session"),
             "chat_api_chat_url": reverse("chat-api-chat"),
+            "chat_api_answer_photos_url": reverse("chat-api-answer-photos"),
+            "chat_api_session_detail_base_url": reverse("chat-api-session-detail", args=[0]).removesuffix("0/"),
             "course_topics_page_url": reverse("course-topics"),
             "course_questions_page_url": reverse("course-questions"),
             "attempts_page_url": reverse("attempts"),

@@ -62,10 +62,12 @@ db.sqlite3
 db.sqlite3-journal
 docker-data/
 redis-data/
+minio-data/
 deploy/compose.yml
 deploy/nginx.conf
 deploy/docker-data/
 deploy/redis-data/
+deploy/minio-data/
 
 # Flask stuff:
 instance/
