@@ -346,6 +346,53 @@ class ChatApiTests(TestCase):
         self.assertEqual(response.json()["active_question"]["question_text"], self.q1.question_text)
         self.assertEqual(response.json()["course_progress"]["coverage_pct"], 50)
 
+    def test_attempts_endpoint_returns_only_the_authenticated_students_attempts(self):
+        token = ApiToken.issue_for_user(self.user)
+        session = ChatSession.objects.create(user_id=str(self.user.pk), course=self.course)
+        other_session = ChatSession.objects.create(user_id=str(self.other_user.pk), course=self.course)
+        first_presentation = QuestionPresentation.objects.create(session=session, question=self.q1)
+        second_presentation = QuestionPresentation.objects.create(session=session, question=self.q2)
+        other_presentation = QuestionPresentation.objects.create(session=other_session, question=self.q1)
+
+        first_attempt = QuestionAttempt.objects.create(
+            presentation=first_presentation,
+            interaction_type=QuestionAttempt.InteractionType.HINT_REQUEST,
+            student_message="Can I get a hint?",
+            model_response_text="Try combining two groups.",
+        )
+        second_attempt = QuestionAttempt.objects.create(
+            presentation=second_presentation,
+            interaction_type=QuestionAttempt.InteractionType.ANSWER_ATTEMPT,
+            student_message="It is 3",
+            model_response_text="Correct.",
+            awarded_marks=4,
+            derived_leitner_score=4,
+            completed_presentation=True,
+        )
+        QuestionAttempt.objects.create(
+            presentation=other_presentation,
+            interaction_type=QuestionAttempt.InteractionType.SKIP,
+            student_message="Skip",
+            model_response_text="Moving on.",
+            completed_presentation=True,
+        )
+
+        response = self.client.get(
+            "/api/chat/attempts/",
+            **self._authorization_header(token),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual([attempt["id"] for attempt in payload["attempts"]], [second_attempt.pk, first_attempt.pk])
+        self.assertEqual(payload["attempts"][0]["course"]["name"], self.course.name)
+        self.assertEqual(payload["attempts"][0]["question"]["question_text"], self.q2.question_text)
+        self.assertEqual(payload["attempts"][0]["topic"]["name"], self.subtraction.name)
+        self.assertEqual(payload["attempts"][0]["interaction_type"], "answer_attempt")
+        self.assertEqual(payload["attempts"][0]["awarded_marks"], 4)
+        self.assertTrue(payload["attempts"][0]["completed_presentation"])
+        self.assertEqual(payload["attempts"][1]["interaction_type"], "hint_request")
+
     def test_hint_request_uses_one_model_call_and_does_not_increment_answer_count(self):
         token = ApiToken.issue_for_user(self.user)
         session = create_session(user=self.user, course=self.course)

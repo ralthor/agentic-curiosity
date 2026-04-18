@@ -160,6 +160,53 @@ def _serialize_session(session: ChatSession) -> dict[str, object]:
     }
 
 
+def _serialize_attempt(attempt: QuestionAttempt) -> dict[str, object]:
+    presentation = attempt.presentation
+    session = presentation.session
+    question = presentation.question
+    topic = question.topic
+    question_type = question.question_type
+
+    return {
+        "id": attempt.pk,
+        "interaction_type": attempt.interaction_type,
+        "interaction_label": attempt.get_interaction_type_display(),
+        "student_message": attempt.student_message,
+        "model_response_text": attempt.model_response_text,
+        "awarded_marks": attempt.awarded_marks,
+        "derived_leitner_score": attempt.derived_leitner_score,
+        "completed_presentation": attempt.completed_presentation,
+        "created_at": attempt.created_at.isoformat(),
+        "session": {
+            "id": session.pk,
+        },
+        "course": {
+            "id": session.course.pk,
+            "name": session.course.name,
+        },
+        "presentation": {
+            "id": presentation.pk,
+            "status": presentation.status,
+            "selection_source": presentation.selection_source,
+            "opened_at": presentation.opened_at.isoformat(),
+            "closed_at": presentation.closed_at.isoformat() if presentation.closed_at is not None else None,
+        },
+        "question": {
+            "id": question.pk,
+            "question_text": question.question_text,
+            "max_marks": question.max_marks,
+        },
+        "topic": {
+            "id": topic.pk,
+            "name": topic.name,
+        },
+        "question_type": {
+            "id": question_type.pk,
+            "name": question_type.name,
+        },
+    }
+
+
 def _resolve_course_topic_for_payload(*, course: Course, item: dict) -> CourseTopic:
     topic_id = _parse_positive_int(item.get("topic_id"))
     topic_import_key = _optional_string(item, "topic_import_key")
@@ -417,6 +464,26 @@ def session_detail_view(request, session_id: int):
         return _json_error("Session not found.", status=404)
 
     return JsonResponse(_serialize_session(session))
+
+
+@csrf_exempt
+@require_GET
+def attempts_view(request):
+    user, error_response = _require_token_user(request)
+    if error_response is not None:
+        return error_response
+
+    attempts = (
+        QuestionAttempt.objects.filter(presentation__session__user_id=str(user.pk))
+        .select_related(
+            "presentation__session__course",
+            "presentation__question__topic",
+            "presentation__question__question_type",
+        )
+        .order_by("-created_at", "-id")
+    )
+
+    return JsonResponse({"attempts": [_serialize_attempt(attempt) for attempt in attempts]})
 
 
 @csrf_exempt
