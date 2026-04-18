@@ -59,8 +59,11 @@ class HomePageTests(SimpleTestCase):
         self.assertContains(response, "Course Questions")
         self.assertContains(response, "Add Question")
         self.assertContains(response, "Update Question")
+        self.assertContains(response, "Questions load automatically for the selected course.")
+        self.assertContains(response, "--accent: #7a1838;")
         self.assertNotContains(response, "Import Key")
         self.assertContains(response, "/api/chat/courses/")
+        self.assertContains(response, "loadSelectedCourseQuestions = true")
         self.assertContains(response, "let selectedQuestionId = null;")
 
 
