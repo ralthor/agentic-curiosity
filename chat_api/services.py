@@ -9,8 +9,14 @@ from django.db import transaction
 from django.utils import timezone
 
 from ai_chat import OpenAIAgent
-from ai_chat.models import ChatSession, LearnerQuestionState, QuestionAttempt, QuestionPresentation
+from ai_chat.models import AnswerPhotoUpload, ChatSession, LearnerQuestionState, QuestionAttempt, QuestionPresentation
 
+from .answer_photos import (
+    build_student_answer_text,
+    cleanup_pending_answer_photo_uploads,
+    extract_text_for_answer_photo,
+    resolve_pending_answer_photo_uploads,
+)
 from .models import Course, CourseQuestion, CourseTopic
 from .progress import derive_leitner_score, schedule_due_at
 from .question_selector import select_next_question
@@ -36,6 +42,7 @@ class InteractionResult:
     awarded_marks: int | None
     derived_leitner_score: int | None
     completed_presentation: bool
+    photo_uploads: list[AnswerPhotoUpload]
 
 
 def _setting_value(name: str) -> str | None:
@@ -97,10 +104,18 @@ def interact_with_session(
     session_id: int,
     text: str = "",
     interaction_type_override: str | None = None,
+    photo_ids: list[int] | None = None,
 ) -> tuple[ChatSession, InteractionResult]:
     cleaned_text = text.strip()
-    interaction_type = interaction_type_override or classify_interaction(cleaned_text)
-    if interaction_type == QuestionAttempt.InteractionType.ANSWER_ATTEMPT and not cleaned_text:
+    resolved_photo_ids = list(photo_ids or [])
+    interaction_type = (
+        interaction_type_override
+        or (QuestionAttempt.InteractionType.ANSWER_ATTEMPT if resolved_photo_ids else None)
+        or classify_interaction(cleaned_text)
+    )
+    if interaction_type != QuestionAttempt.InteractionType.ANSWER_ATTEMPT and resolved_photo_ids:
+        raise ValueError("photo_ids can only be used when submitting an answer.")
+    if interaction_type == QuestionAttempt.InteractionType.ANSWER_ATTEMPT and not cleaned_text and not resolved_photo_ids:
         raise ValueError("text must not be blank.")
     student_message = cleaned_text or _default_student_message(interaction_type)
 
@@ -125,7 +140,12 @@ def interact_with_session(
                 student_message=student_message,
             )
         else:
-            result = _handle_answer_attempt(session=session, presentation=presentation, student_message=student_message)
+            result = _handle_answer_attempt(
+                session=session,
+                presentation=presentation,
+                student_message=student_message,
+                photo_ids=resolved_photo_ids,
+            )
 
         ChatSession.objects.filter(pk=session.pk).update(updated_at=timezone.now())
 
@@ -180,11 +200,27 @@ def _handle_hint_request(*, session: ChatSession, presentation: QuestionPresenta
         awarded_marks=None,
         derived_leitner_score=None,
         completed_presentation=False,
+        photo_uploads=[],
     )
 
 
-def _handle_answer_attempt(*, session: ChatSession, presentation: QuestionPresentation, student_message: str) -> InteractionResult:
+def _handle_answer_attempt(
+    *,
+    session: ChatSession,
+    presentation: QuestionPresentation,
+    student_message: str,
+    photo_ids: list[int] | None = None,
+) -> InteractionResult:
     question = presentation.question
+    photo_uploads = _prepare_answer_photo_uploads_for_attempt(
+        session=session,
+        presentation=presentation,
+        student_message=student_message,
+        photo_ids=list(photo_ids or []),
+    )
+    composed_student_message = build_student_answer_text(uploads=photo_uploads, typed_text=student_message)
+    if not composed_student_message:
+        composed_student_message = student_message
     prior_attempts = _recent_attempts(presentation)
     agent = OpenAIAgent(
         system=question.question_type.mark_prompt,
@@ -195,7 +231,7 @@ def _handle_answer_attempt(*, session: ChatSession, presentation: QuestionPresen
             session=session,
             presentation=presentation,
             prior_attempts=prior_attempts,
-            student_message=student_message,
+            student_message=composed_student_message,
         ),
         user=session.user_id,
     ).strip()
@@ -203,15 +239,18 @@ def _handle_answer_attempt(*, session: ChatSession, presentation: QuestionPresen
     derived_leitner_score = derive_leitner_score(awarded_marks=awarded_marks, max_marks=question.max_marks)
     completed_presentation = awarded_marks >= question.max_marks
     now = timezone.now()
-    QuestionAttempt.objects.create(
+    attempt = QuestionAttempt.objects.create(
         presentation=presentation,
         interaction_type=QuestionAttempt.InteractionType.ANSWER_ATTEMPT,
-        student_message=student_message,
+        student_message=composed_student_message,
         model_response_text=explanation,
         awarded_marks=awarded_marks,
         derived_leitner_score=derived_leitner_score,
         completed_presentation=completed_presentation,
     )
+    for upload in photo_uploads:
+        upload.attempt = attempt
+        upload.save(update_fields=["attempt", "updated_at"])
     _update_learner_state_after_answer(
         session=session,
         question=question,
@@ -220,6 +259,7 @@ def _handle_answer_attempt(*, session: ChatSession, presentation: QuestionPresen
         updated_at=now,
     )
     if completed_presentation:
+        cleanup_pending_answer_photo_uploads(presentation=presentation)
         _close_presentation(
             presentation=presentation,
             status=QuestionPresentation.Status.COMPLETED,
@@ -232,6 +272,7 @@ def _handle_answer_attempt(*, session: ChatSession, presentation: QuestionPresen
         awarded_marks=awarded_marks,
         derived_leitner_score=derived_leitner_score,
         completed_presentation=completed_presentation,
+        photo_uploads=photo_uploads,
     )
 
 
@@ -245,6 +286,7 @@ def _handle_skip(*, session: ChatSession, presentation: QuestionPresentation, st
         completed_presentation=True,
     )
     _update_learner_state_after_skip(session=session, question=presentation.question, updated_at=now)
+    cleanup_pending_answer_photo_uploads(presentation=presentation)
     _close_presentation(
         presentation=presentation,
         status=QuestionPresentation.Status.SKIPPED,
@@ -257,6 +299,7 @@ def _handle_skip(*, session: ChatSession, presentation: QuestionPresentation, st
         awarded_marks=None,
         derived_leitner_score=None,
         completed_presentation=True,
+        photo_uploads=[],
     )
 
 
@@ -300,7 +343,38 @@ def _handle_full_answer_request(
         awarded_marks=None,
         derived_leitner_score=None,
         completed_presentation=False,
+        photo_uploads=[],
     )
+
+
+def _prepare_answer_photo_uploads_for_attempt(
+    *,
+    session: ChatSession,
+    presentation: QuestionPresentation,
+    student_message: str,
+    photo_ids: list[int],
+) -> list[AnswerPhotoUpload]:
+    if not photo_ids:
+        return []
+
+    uploads = resolve_pending_answer_photo_uploads(
+        session=session,
+        presentation=presentation,
+        photo_ids=photo_ids,
+    )
+    question = presentation.question
+    for upload in uploads:
+        extract_text_for_answer_photo(
+            upload=upload,
+            question_text=question.question_text,
+            question_type_name=question.question_type.name,
+        )
+
+    if not build_student_answer_text(uploads=uploads, typed_text=student_message):
+        raise ValueError(
+            "I could not read any answer text from the uploaded photo(s). Try a clearer photo or add a typed note."
+        )
+    return uploads
 
 
 def _assign_next_question(*, session: ChatSession, exclude_question_id: int | None = None) -> QuestionPresentation | None:

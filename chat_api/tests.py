@@ -3,11 +3,12 @@ from datetime import timedelta
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.exceptions import ValidationError
 from django.test import SimpleTestCase, TestCase, override_settings
 from django.utils import timezone
 
-from ai_chat.models import ChatSession, LearnerQuestionState, QuestionAttempt, QuestionPresentation
+from ai_chat.models import AnswerPhotoUpload, ChatSession, LearnerQuestionState, QuestionAttempt, QuestionPresentation
 
 from .models import ApiToken, Course, CourseQuestion, CourseTopic, LoginRateLimit, QuestionType
 from .progress import build_course_progress, derive_leitner_score, schedule_due_at
@@ -22,6 +23,26 @@ class RecordingAgent:
 
     def ask(self, text=None, *, messages=None, system=None, model=None, **kwargs):
         return self.response_text
+
+
+class FakeObjectStorage:
+    def __init__(self):
+        self.objects = {}
+
+    def ensure_bucket(self):
+        return False
+
+    def put_object(self, *, key: str, body: bytes, content_type: str):
+        self.objects[key] = {
+            "body": body,
+            "content_type": content_type,
+        }
+
+    def get_object_bytes(self, *, key: str) -> bytes:
+        return self.objects[key]["body"]
+
+    def delete_object(self, *, key: str):
+        self.objects.pop(key, None)
 
 
 class ProgressTests(SimpleTestCase):
@@ -213,6 +234,9 @@ class ChatApiTests(TestCase):
 
     def _authorization_header(self, token: ApiToken) -> dict[str, str]:
         return {"HTTP_AUTHORIZATION": f"Token {token.key}"}
+
+    def _post_multipart(self, path, payload, **extra):
+        return self.client.post(path, data=payload, **extra)
 
     def test_login_returns_token_and_logs_the_user_in(self):
         response = self._post_json("/api/chat/login/", {"username": "alice", "password": "wonderland"})
@@ -518,6 +542,298 @@ class ChatApiTests(TestCase):
         self.assertEqual(payload["attempts"][0]["awarded_marks"], 4)
         self.assertTrue(payload["attempts"][0]["completed_presentation"])
         self.assertEqual(payload["attempts"][1]["interaction_type"], "hint_request")
+
+    def test_answer_photo_upload_endpoint_returns_pending_photo_metadata(self):
+        token = ApiToken.issue_for_user(self.user)
+        session = create_session(user=self.user, course=self.course)
+        fake_storage = FakeObjectStorage()
+        upload_file = SimpleUploadedFile("answer.jpg", b"jpeg-bytes", content_type="image/jpeg")
+
+        with (
+            patch("chat_api.views.object_storage_is_configured", return_value=True),
+            patch("chat_api.answer_photos.get_object_storage", return_value=fake_storage),
+        ):
+            response = self._post_multipart(
+                "/api/chat/answer-photos/",
+                {"session_id": str(session.pk), "photos": [upload_file]},
+                **self._authorization_header(token),
+            )
+
+        self.assertEqual(response.status_code, 201)
+        payload = response.json()
+        self.assertEqual(len(payload["photos"]), 1)
+        photo = AnswerPhotoUpload.objects.get()
+        self.assertEqual(payload["photos"][0]["id"], photo.pk)
+        self.assertEqual(payload["photos"][0]["content_url"], f"/api/chat/answer-photos/{photo.pk}/content/")
+        self.assertIn(photo.storage_key, fake_storage.objects)
+
+    def test_answer_photo_upload_endpoint_rejects_invalid_file_type(self):
+        token = ApiToken.issue_for_user(self.user)
+        session = create_session(user=self.user, course=self.course)
+        fake_storage = FakeObjectStorage()
+        upload_file = SimpleUploadedFile("notes.txt", b"not-an-image", content_type="text/plain")
+
+        with (
+            patch("chat_api.views.object_storage_is_configured", return_value=True),
+            patch("chat_api.answer_photos.get_object_storage", return_value=fake_storage),
+        ):
+            response = self._post_multipart(
+                "/api/chat/answer-photos/",
+                {"session_id": str(session.pk), "photos": [upload_file]},
+                **self._authorization_header(token),
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "Only JPEG, PNG, and WEBP images are supported.")
+        self.assertFalse(AnswerPhotoUpload.objects.exists())
+
+    def test_answer_photo_delete_endpoint_removes_owned_pending_photo(self):
+        token = ApiToken.issue_for_user(self.user)
+        session = create_session(user=self.user, course=self.course)
+        fake_storage = FakeObjectStorage()
+        upload = AnswerPhotoUpload.objects.create(
+            session=session,
+            presentation=session.active_presentation,
+            storage_key="answer-photos/delete-me.jpg",
+            filename="delete-me.jpg",
+            content_type="image/jpeg",
+            byte_size=12,
+            display_order=1,
+        )
+        fake_storage.objects[upload.storage_key] = {"body": b"img", "content_type": "image/jpeg"}
+
+        with patch("chat_api.answer_photos.get_object_storage", return_value=fake_storage):
+            response = self.client.delete(
+                f"/api/chat/answer-photos/{upload.pk}/",
+                **self._authorization_header(token),
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(AnswerPhotoUpload.objects.filter(pk=upload.pk).exists())
+        self.assertNotIn(upload.storage_key, fake_storage.objects)
+
+    def test_answer_photo_content_endpoint_returns_stored_bytes(self):
+        token = ApiToken.issue_for_user(self.user)
+        session = create_session(user=self.user, course=self.course)
+        fake_storage = FakeObjectStorage()
+        upload = AnswerPhotoUpload.objects.create(
+            session=session,
+            presentation=session.active_presentation,
+            storage_key="answer-photos/content.jpg",
+            filename="content.jpg",
+            content_type="image/jpeg",
+            byte_size=13,
+            display_order=1,
+        )
+        fake_storage.objects[upload.storage_key] = {"body": b"image-content", "content_type": "image/jpeg"}
+
+        with (
+            patch("chat_api.views.object_storage_is_configured", return_value=True),
+            patch("chat_api.answer_photos.get_object_storage", return_value=fake_storage),
+        ):
+            response = self.client.get(
+                f"/api/chat/answer-photos/{upload.pk}/content/",
+                **self._authorization_header(token),
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content, b"image-content")
+        self.assertEqual(response["Content-Type"], "image/jpeg")
+
+    def test_chat_endpoint_rejects_photo_ids_for_hint_requests(self):
+        token = ApiToken.issue_for_user(self.user)
+        session = create_session(user=self.user, course=self.course)
+
+        response = self._post_json(
+            "/api/chat/chat/",
+            {"session_id": session.pk, "action": "hint", "photo_ids": [123]},
+            **self._authorization_header(token),
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "photo_ids can only be used with answer submissions.")
+
+    def test_photo_only_answer_uses_ocr_text_and_attaches_uploaded_photo(self):
+        token = ApiToken.issue_for_user(self.user)
+        session = create_session(user=self.user, course=self.course)
+        fake_storage = FakeObjectStorage()
+        upload = AnswerPhotoUpload.objects.create(
+            session=session,
+            presentation=session.active_presentation,
+            storage_key="answer-photos/ocr.jpg",
+            filename="ocr.jpg",
+            content_type="image/jpeg",
+            byte_size=9,
+            display_order=1,
+        )
+        fake_storage.objects[upload.storage_key] = {"body": b"ocr-image", "content_type": "image/jpeg"}
+
+        with (
+            patch("chat_api.answer_photos.get_object_storage", return_value=fake_storage),
+            patch("chat_api.answer_photos.OpenAIAgent", side_effect=[RecordingAgent(response_text="5")]),
+            patch(
+                "chat_api.services.OpenAIAgent",
+                side_effect=lambda **kwargs: RecordingAgent(
+                    response_text='{"awarded_marks": 4, "explanation": "Correct."}'
+                ),
+            ),
+        ):
+            response = self._post_json(
+                "/api/chat/chat/",
+                {"session_id": session.pk, "action": "answer", "photo_ids": [upload.pk]},
+                **self._authorization_header(token),
+            )
+
+        self.assertEqual(response.status_code, 200)
+        latest_attempt = QuestionAttempt.objects.filter(
+            presentation__session_id=session.pk,
+            interaction_type=QuestionAttempt.InteractionType.ANSWER_ATTEMPT,
+        ).latest("created_at", "id")
+        upload.refresh_from_db()
+        self.assertEqual(latest_attempt.student_message, "Photo 1 OCR:\n5")
+        self.assertEqual(upload.attempt_id, latest_attempt.pk)
+        self.assertEqual(upload.extracted_text, "5")
+        self.assertEqual(len(response.json()["interaction_photos"]), 1)
+
+    def test_multiple_photos_and_typed_note_are_combined_in_order(self):
+        token = ApiToken.issue_for_user(self.user)
+        session = create_session(user=self.user, course=self.course)
+        fake_storage = FakeObjectStorage()
+        first = AnswerPhotoUpload.objects.create(
+            session=session,
+            presentation=session.active_presentation,
+            storage_key="answer-photos/first.jpg",
+            filename="first.jpg",
+            content_type="image/jpeg",
+            byte_size=9,
+            display_order=1,
+        )
+        second = AnswerPhotoUpload.objects.create(
+            session=session,
+            presentation=session.active_presentation,
+            storage_key="answer-photos/second.jpg",
+            filename="second.jpg",
+            content_type="image/jpeg",
+            byte_size=9,
+            display_order=2,
+        )
+        fake_storage.objects[first.storage_key] = {"body": b"first-image", "content_type": "image/jpeg"}
+        fake_storage.objects[second.storage_key] = {"body": b"second-image", "content_type": "image/jpeg"}
+
+        with (
+            patch("chat_api.answer_photos.get_object_storage", return_value=fake_storage),
+            patch(
+                "chat_api.answer_photos.OpenAIAgent",
+                side_effect=[RecordingAgent(response_text="First line"), RecordingAgent(response_text="Second line")],
+            ),
+            patch(
+                "chat_api.services.OpenAIAgent",
+                side_effect=lambda **kwargs: RecordingAgent(
+                    response_text='{"awarded_marks": 2, "explanation": "Partial credit."}'
+                ),
+            ),
+        ):
+            response = self._post_json(
+                "/api/chat/chat/",
+                {
+                    "session_id": session.pk,
+                    "action": "answer",
+                    "text": "I also wrote it as 5.",
+                    "photo_ids": [second.pk, first.pk],
+                },
+                **self._authorization_header(token),
+            )
+
+        self.assertEqual(response.status_code, 200)
+        latest_attempt = QuestionAttempt.objects.filter(
+            presentation=session.active_presentation,
+            interaction_type=QuestionAttempt.InteractionType.ANSWER_ATTEMPT,
+        ).latest("created_at", "id")
+        self.assertEqual(
+            latest_attempt.student_message,
+            "Photo 1 OCR:\nFirst line\n\nPhoto 2 OCR:\nSecond line\n\nTyped note:\nI also wrote it as 5.",
+        )
+        self.assertFalse(response.json()["completed_presentation"])
+
+    def test_photo_only_answer_with_blank_ocr_returns_400_and_keeps_pending_photo(self):
+        token = ApiToken.issue_for_user(self.user)
+        session = create_session(user=self.user, course=self.course)
+        fake_storage = FakeObjectStorage()
+        upload = AnswerPhotoUpload.objects.create(
+            session=session,
+            presentation=session.active_presentation,
+            storage_key="answer-photos/blank.jpg",
+            filename="blank.jpg",
+            content_type="image/jpeg",
+            byte_size=9,
+            display_order=1,
+        )
+        fake_storage.objects[upload.storage_key] = {"body": b"blank-image", "content_type": "image/jpeg"}
+
+        with (
+            patch("chat_api.answer_photos.get_object_storage", return_value=fake_storage),
+            patch("chat_api.answer_photos.OpenAIAgent", side_effect=[RecordingAgent(response_text="   ")]),
+        ):
+            response = self._post_json(
+                "/api/chat/chat/",
+                {"session_id": session.pk, "action": "answer", "photo_ids": [upload.pk]},
+                **self._authorization_header(token),
+            )
+
+        self.assertEqual(response.status_code, 400)
+        upload.refresh_from_db()
+        self.assertIsNone(upload.attempt_id)
+        self.assertEqual(
+            response.json()["error"],
+            "I could not read any answer text from the uploaded photo(s). Try a clearer photo or add a typed note.",
+        )
+
+    def test_completed_answer_cleans_up_unused_pending_photos(self):
+        token = ApiToken.issue_for_user(self.user)
+        session = create_session(user=self.user, course=self.course)
+        fake_storage = FakeObjectStorage()
+        used_upload = AnswerPhotoUpload.objects.create(
+            session=session,
+            presentation=session.active_presentation,
+            storage_key="answer-photos/used.jpg",
+            filename="used.jpg",
+            content_type="image/jpeg",
+            byte_size=9,
+            display_order=1,
+        )
+        unused_upload = AnswerPhotoUpload.objects.create(
+            session=session,
+            presentation=session.active_presentation,
+            storage_key="answer-photos/unused.jpg",
+            filename="unused.jpg",
+            content_type="image/jpeg",
+            byte_size=9,
+            display_order=2,
+        )
+        fake_storage.objects[used_upload.storage_key] = {"body": b"used-image", "content_type": "image/jpeg"}
+        fake_storage.objects[unused_upload.storage_key] = {"body": b"unused-image", "content_type": "image/jpeg"}
+
+        with (
+            patch("chat_api.answer_photos.get_object_storage", return_value=fake_storage),
+            patch("chat_api.answer_photos.OpenAIAgent", side_effect=[RecordingAgent(response_text="5")]),
+            patch(
+                "chat_api.services.OpenAIAgent",
+                side_effect=lambda **kwargs: RecordingAgent(
+                    response_text='{"awarded_marks": 4, "explanation": "Correct."}'
+                ),
+            ),
+        ):
+            response = self._post_json(
+                "/api/chat/chat/",
+                {"session_id": session.pk, "action": "answer", "photo_ids": [used_upload.pk]},
+                **self._authorization_header(token),
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(AnswerPhotoUpload.objects.filter(pk=used_upload.pk).exists())
+        self.assertFalse(AnswerPhotoUpload.objects.filter(pk=unused_upload.pk).exists())
+        self.assertIn(used_upload.storage_key, fake_storage.objects)
+        self.assertNotIn(unused_upload.storage_key, fake_storage.objects)
 
     def test_hint_request_uses_one_model_call_and_does_not_increment_answer_count(self):
         token = ApiToken.issue_for_user(self.user)

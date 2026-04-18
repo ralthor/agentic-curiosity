@@ -129,3 +129,40 @@ class LearnerQuestionState(models.Model):
 
     def __str__(self) -> str:
         return f"LearnerQuestionState(user_id={self.user_id!r}, question_id={self.question_id}, latest={self.latest_leitner_score})"
+
+
+class AnswerPhotoUpload(models.Model):
+    session = models.ForeignKey(
+        ChatSession,
+        on_delete=models.CASCADE,
+        related_name="answer_photo_uploads",
+    )
+    presentation = models.ForeignKey(
+        QuestionPresentation,
+        on_delete=models.CASCADE,
+        related_name="answer_photo_uploads",
+    )
+    attempt = models.ForeignKey(
+        QuestionAttempt,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="photo_uploads",
+    )
+    storage_key = models.CharField(max_length=500, unique=True)
+    filename = models.CharField(max_length=255)
+    content_type = models.CharField(max_length=100)
+    byte_size = models.PositiveIntegerField()
+    display_order = models.PositiveIntegerField(default=1)
+    extracted_text = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("presentation_id", "display_order", "id")
+
+    def __str__(self) -> str:
+        return (
+            f"AnswerPhotoUpload(session_id={self.session_id}, presentation_id={self.presentation_id}, "
+            f"attempt_id={self.attempt_id}, id={self.pk})"
+        )

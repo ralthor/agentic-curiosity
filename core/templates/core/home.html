@@ -126,12 +126,6 @@
             margin-bottom: 6px;
         }
 
-        .detail {
-            margin-top: 12px;
-            color: var(--muted);
-            line-height: 1.5;
-        }
-
         .badge {
             display: inline-block;
             padding: 4px 10px;
@@ -171,6 +165,50 @@
 
         .markdown-content > :last-child {
             margin-bottom: 0;
+        }
+
+        .photo-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 12px;
+            margin-top: 12px;
+        }
+
+        .photo-card {
+            border: 1px solid var(--line);
+            border-radius: 14px;
+            padding: 10px;
+            background: #fffdf8;
+        }
+
+        .photo-card img {
+            width: 100%;
+            aspect-ratio: 4 / 3;
+            object-fit: cover;
+            border-radius: 10px;
+            border: 1px solid var(--line);
+            background: #f8f1e7;
+        }
+
+        .photo-card strong,
+        .photo-card small {
+            display: block;
+            margin-top: 8px;
+        }
+
+        .photo-card small {
+            color: var(--muted);
+            line-height: 1.4;
+        }
+
+        .photo-card button {
+            margin-top: 10px;
+        }
+
+        .subtle {
+            color: var(--muted);
+            font-size: 0.92rem;
+            line-height: 1.5;
         }
 
         a {
@@ -246,14 +284,20 @@
     <div class="grid">
         <section class="panel">
             <h2>Respond</h2>
-            <p>Type an answer below. Use the dedicated buttons for hint, skip, and full-answer actions.</p>
+            <p>Type an answer, attach answer photos, or use the camera on your phone directly from this page. Hint, skip, and full-answer actions stay text-only.</p>
             <label for="message">Answer</label>
-            <textarea id="message" placeholder="Type your answer here."></textarea>
+            <textarea id="message" placeholder="Type your answer here or leave this blank and submit photos only."></textarea>
+            <input id="photo-input" type="file" accept="image/*" capture="environment" multiple hidden>
             <div class="action-row">
                 <button id="send-button" type="button">Submit Answer</button>
+                <button id="attach-photo-button" type="button" class="secondary">Upload / Take Photos</button>
                 <button id="hint-button" type="button" class="secondary">Hint</button>
                 <button id="skip-button" type="button" class="secondary">Skip</button>
                 <button id="full-answer-button" type="button" class="secondary">Full Answer</button>
+            </div>
+            <p class="subtle" style="margin-top: 12px;">Up to 4 photos per answer. Accepted formats: JPEG, PNG, and WEBP.</p>
+            <div id="pending-photos" class="photo-grid">
+                <div class="card"><strong>Pending photos</strong><span>No photos attached to the current answer yet.</span></div>
             </div>
             <div class="status" id="chat-status">Waiting for a session.</div>
         </section>
@@ -289,7 +333,9 @@
         tokenUrl: "{{ chat_api_token_url|escapejs }}",
         coursesUrl: "{{ chat_api_courses_url|escapejs }}",
         sessionsUrl: "{{ chat_api_sessions_url|escapejs }}",
-        chatUrl: "{{ chat_api_chat_url|escapejs }}"
+        chatUrl: "{{ chat_api_chat_url|escapejs }}",
+        answerPhotosUrl: "{{ chat_api_answer_photos_url|escapejs }}",
+        sessionDetailBaseUrl: "{{ chat_api_session_detail_base_url|escapejs }}"
     };
 
     const storageKeys = {
@@ -304,7 +350,8 @@
         sessionId: localStorage.getItem(storageKeys.sessionId) || "",
         courseId: localStorage.getItem(storageKeys.courseId) || "",
         courseName: localStorage.getItem(storageKeys.courseName) || "",
-        activeQuestion: null
+        activeQuestion: null,
+        pendingPhotos: []
     };
 
     const authStatus = document.getElementById("auth-status");
@@ -329,6 +376,9 @@
     const activeSelectionSource = document.getElementById("active-selection-source");
     const messageField = document.getElementById("message");
     const sendButton = document.getElementById("send-button");
+    const attachPhotoButton = document.getElementById("attach-photo-button");
+    const photoInput = document.getElementById("photo-input");
+    const pendingPhotos = document.getElementById("pending-photos");
     const hintButton = document.getElementById("hint-button");
     const skipButton = document.getElementById("skip-button");
     const fullAnswerButton = document.getElementById("full-answer-button");
@@ -347,21 +397,8 @@
         localStorage.setItem(storageKeys.courseName, state.courseName);
     }
 
-    function appendEntry(title, body) {
-        const entry = document.createElement("div");
-        entry.className = "entry";
-        const titleElement = document.createElement("strong");
-        titleElement.textContent = title;
-        const bodyElement = document.createElement("div");
-        bodyElement.className = "markdown-content";
-        bodyElement.innerHTML = renderMarkdown(body);
-        entry.appendChild(titleElement);
-        entry.appendChild(bodyElement);
-        transcript.prepend(entry);
-    }
-
     function escapeHtml(value) {
-        return String(value)
+        return String(value || "")
             .replaceAll("&", "&amp;")
             .replaceAll("<", "&lt;")
             .replaceAll(">", "&gt;")
@@ -387,6 +424,41 @@
         return titles[interactionType] || interactionType;
     }
 
+    function buildPhotoGalleryHtml(photos, { showExtractedText = false } = {}) {
+        if (!Array.isArray(photos) || !photos.length) {
+            return "";
+        }
+        const cards = photos.map((photo) => `
+            <div class="photo-card">
+                <img src="${escapeHtml(photo.content_url)}" alt="${escapeHtml(photo.filename || "Uploaded answer photo")}">
+                <strong>${escapeHtml(photo.filename || `Photo ${photo.display_order || ""}`)}</strong>
+                <small>${escapeHtml(photo.content_type || "")} | ${escapeHtml(photo.byte_size || 0)} bytes</small>
+                ${showExtractedText && photo.extracted_text
+                    ? `<small><strong>OCR</strong>${renderMarkdown(photo.extracted_text)}</small>`
+                    : ""}
+            </div>
+        `).join("");
+        return `<div class="photo-grid">${cards}</div>`;
+    }
+
+    function appendEntry(title, body, photos = []) {
+        const entry = document.createElement("div");
+        entry.className = "entry";
+        const titleElement = document.createElement("strong");
+        titleElement.textContent = title;
+        const bodyElement = document.createElement("div");
+        bodyElement.className = "markdown-content";
+        bodyElement.innerHTML = renderMarkdown(body);
+        entry.appendChild(titleElement);
+        entry.appendChild(bodyElement);
+        if (photos.length) {
+            const gallery = document.createElement("div");
+            gallery.innerHTML = buildPhotoGalleryHtml(photos);
+            entry.appendChild(gallery.firstElementChild);
+        }
+        transcript.prepend(entry);
+    }
+
     function renderCourses() {
         courseSelect.innerHTML = "";
         const placeholder = document.createElement("option");
@@ -404,11 +476,36 @@
         courseSelect.value = state.courseId || "";
     }
 
+    function renderPendingPhotos() {
+        if (!state.pendingPhotos.length) {
+            pendingPhotos.innerHTML = '<div class="card"><strong>Pending photos</strong><span>No photos attached to the current answer yet.</span></div>';
+            return;
+        }
+
+        pendingPhotos.innerHTML = state.pendingPhotos.map((photo) => `
+            <div class="photo-card">
+                <img src="${escapeHtml(photo.content_url)}" alt="${escapeHtml(photo.filename || "Pending answer photo")}">
+                <strong>${escapeHtml(photo.filename || `Photo ${photo.display_order || ""}`)}</strong>
+                <small>${escapeHtml(photo.content_type || "")} | ${escapeHtml(photo.byte_size || 0)} bytes</small>
+                <button type="button" class="secondary pending-photo-remove" data-photo-id="${escapeHtml(photo.id)}">Remove</button>
+            </div>
+        `).join("");
+    }
+
+    function updateActionButtons(hasActiveQuestion) {
+        sendButton.disabled = !hasActiveQuestion;
+        attachPhotoButton.disabled = !hasActiveQuestion;
+        hintButton.disabled = !hasActiveQuestion;
+        skipButton.disabled = !hasActiveQuestion;
+        fullAnswerButton.disabled = !hasActiveQuestion;
+    }
+
     function renderSession(payload) {
         state.sessionId = payload.session_id ? String(payload.session_id) : "";
         state.courseId = payload.course ? String(payload.course.id) : "";
         state.courseName = payload.course ? payload.course.name : "";
         state.activeQuestion = payload.active_question || null;
+        state.pendingPhotos = payload.active_question?.pending_photos || [];
         storeState();
 
         currentCourse.textContent = state.courseName || "none";
@@ -430,10 +527,9 @@
             activeQuestionCard.hidden = true;
             activeQuestionSummary.textContent = "No active question is available for this session.";
         }
-        sendButton.disabled = !payload.active_question;
-        fullAnswerButton.disabled = !payload.active_question;
-        hintButton.disabled = !payload.active_question;
-        skipButton.disabled = !payload.active_question;
+
+        renderPendingPhotos();
+        updateActionButtons(Boolean(payload.active_question));
 
         topicProgress.innerHTML = "";
         const rows = payload.topic_progress || [];
@@ -454,7 +550,7 @@
         if (state.token) {
             headers.set("Authorization", `Token ${state.token}`);
         }
-        if (options.body && !headers.has("Content-Type")) {
+        if (options.body && !(options.body instanceof FormData) && !headers.has("Content-Type")) {
             headers.set("Content-Type", "application/json");
         }
         const response = await fetch(url, { ...options, headers });
@@ -475,6 +571,15 @@
         setStatus(authStatus, `Loaded ${availableCourses.length} course(s).`);
     }
 
+    async function loadSessionDetail() {
+        if (!state.sessionId) {
+            return;
+        }
+        const payload = await fetchJson(`${config.sessionDetailBaseUrl}${state.sessionId}/`);
+        renderSession(payload);
+        setStatus(sessionStatus, `Restored session ${payload.session_id} for ${payload.course.name}.`);
+    }
+
     async function login() {
         const username = usernameField.value.trim();
         const password = passwordField.value;
@@ -489,6 +594,9 @@
         storeState();
         setStatus(authStatus, `Authenticated as ${payload.username}.`);
         await loadCourses();
+        if (state.sessionId) {
+            await loadSessionDetail();
+        }
     }
 
     async function createSession() {
@@ -504,6 +612,34 @@
         appendEntry("Session", `Created session ${payload.session_id} for ${payload.course.name}.`);
     }
 
+    async function uploadSelectedPhotos(files) {
+        if (!state.sessionId) {
+            throw new Error("Create a session first.");
+        }
+        if (!files.length) {
+            return;
+        }
+        const body = new FormData();
+        body.append("session_id", state.sessionId);
+        Array.from(files).forEach((file) => body.append("photos", file));
+        const payload = await fetchJson(config.answerPhotosUrl, {
+            method: "POST",
+            body
+        });
+        state.pendingPhotos = [...state.pendingPhotos, ...(payload.photos || [])];
+        renderPendingPhotos();
+        setStatus(chatStatus, `Uploaded ${payload.photos.length} photo(s).`);
+    }
+
+    async function removePendingPhoto(photoId) {
+        await fetchJson(`${config.answerPhotosUrl}${photoId}/`, {
+            method: "DELETE"
+        });
+        state.pendingPhotos = state.pendingPhotos.filter((photo) => String(photo.id) !== String(photoId));
+        renderPendingPhotos();
+        setStatus(chatStatus, "Removed pending photo.");
+    }
+
     async function sendInteraction({ text = "", action = "", clearMessage = false } = {}) {
         if (!state.sessionId) {
             throw new Error("Create a session first.");
@@ -514,6 +650,9 @@
         }
         if (text || !action || action === "answer") {
             requestBody.text = text;
+        }
+        if ((action === "answer" || !action) && state.pendingPhotos.length) {
+            requestBody.photo_ids = state.pendingPhotos.map((photo) => photo.id);
         }
         const payload = await fetchJson(config.chatUrl, {
             method: "POST",
@@ -535,15 +674,16 @@
         }
         appendEntry(
             formatInteractionTitle(payload.interaction_type),
-            `${payload.message}${extras.length ? `\n\n${extras.join(" | ")}` : ""}`
+            `${payload.message}${extras.length ? `\n\n${extras.join(" | ")}` : ""}`,
+            payload.interaction_photos || []
         );
         setStatus(chatStatus, `Handled ${payload.interaction_type}.`);
     }
 
     async function sendMessage() {
         const text = messageField.value.trim();
-        if (!text) {
-            throw new Error("Type an answer first.");
+        if (!text && !state.pendingPhotos.length) {
+            throw new Error("Type an answer or attach at least one photo first.");
         }
         await sendInteraction({ text, action: "answer", clearMessage: true });
     }
@@ -567,7 +707,9 @@
 
     document.getElementById("load-courses-button").addEventListener("click", () => {
         setStatus(authStatus, "Loading courses...");
-        loadCourses().catch((error) => setStatus(authStatus, error.message, true));
+        loadCourses()
+            .then(() => state.sessionId ? loadSessionDetail() : null)
+            .catch((error) => setStatus(authStatus, error.message, true));
     });
 
     document.getElementById("create-session-button").addEventListener("click", () => {
@@ -578,6 +720,36 @@
     document.getElementById("send-button").addEventListener("click", () => {
         setStatus(chatStatus, "Sending answer...");
         sendMessage().catch((error) => setStatus(chatStatus, error.message, true));
+    });
+
+    attachPhotoButton.addEventListener("click", () => {
+        if (!state.sessionId) {
+            setStatus(chatStatus, "Create a session first.", true);
+            return;
+        }
+        photoInput.click();
+    });
+
+    photoInput.addEventListener("change", () => {
+        const files = photoInput.files ? Array.from(photoInput.files) : [];
+        if (!files.length) {
+            return;
+        }
+        setStatus(chatStatus, "Uploading answer photo...");
+        uploadSelectedPhotos(files)
+            .catch((error) => setStatus(chatStatus, error.message, true))
+            .finally(() => {
+                photoInput.value = "";
+            });
+    });
+
+    pendingPhotos.addEventListener("click", (event) => {
+        const button = event.target.closest(".pending-photo-remove");
+        if (!button) {
+            return;
+        }
+        setStatus(chatStatus, "Removing answer photo...");
+        removePendingPhoto(button.dataset.photoId).catch((error) => setStatus(chatStatus, error.message, true));
     });
 
     hintButton.addEventListener("click", () => {
@@ -602,13 +774,14 @@
         storeState();
     });
 
+    updateActionButtons(false);
+    renderPendingPhotos();
+
     if (state.token) {
-        loadCourses().catch((error) => setStatus(authStatus, error.message, true));
+        loadCourses()
+            .then(() => state.sessionId ? loadSessionDetail() : null)
+            .catch((error) => setStatus(authStatus, error.message, true));
     }
-    sendButton.disabled = true;
-    hintButton.disabled = true;
-    skipButton.disabled = true;
-    fullAnswerButton.disabled = true;
 </script>
 </body>
 </html>

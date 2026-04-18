@@ -1,6 +1,9 @@
 from django.urls import path
 
 from .views import (
+    answer_photo_content_view,
+    answer_photo_detail_view,
+    answer_photos_view,
     attempts_view,
     chat_view,
     course_question_detail_view,
@@ -25,6 +28,13 @@ urlpatterns = [
     ),
     path("courses/<int:course_id>/questions/import/", import_course_questions_view, name="chat-api-import-course-questions"),
     path("attempts/", attempts_view, name="chat-api-attempts"),
+    path("answer-photos/", answer_photos_view, name="chat-api-answer-photos"),
+    path("answer-photos/<int:photo_id>/", answer_photo_detail_view, name="chat-api-answer-photo-detail"),
+    path(
+        "answer-photos/<int:photo_id>/content/",
+        answer_photo_content_view,
+        name="chat-api-answer-photo-content",
+    ),
     path("sessions/", create_session_view, name="chat-api-create-session"),
     path("sessions/<int:session_id>/", session_detail_view, name="chat-api-session-detail"),
     path("chat/", chat_view, name="chat-api-chat"),

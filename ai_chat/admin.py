@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import ChatSession, LearnerQuestionState, QuestionAttempt, QuestionPresentation
+from .models import AnswerPhotoUpload, ChatSession, LearnerQuestionState, QuestionAttempt, QuestionPresentation
 
 
 @admin.register(ChatSession)
@@ -51,3 +51,22 @@ class LearnerQuestionStateAdmin(admin.ModelAdmin):
     list_select_related = ("course", "question")
     search_fields = ("user_id", "course__name", "question__question_text")
     ordering = ("user_id", "course__name", "question_id")
+
+
+@admin.register(AnswerPhotoUpload)
+class AnswerPhotoUploadAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "session",
+        "presentation",
+        "attempt",
+        "filename",
+        "content_type",
+        "byte_size",
+        "display_order",
+        "created_at",
+    )
+    list_select_related = ("session", "presentation", "attempt")
+    list_filter = ("content_type",)
+    search_fields = ("session__user_id", "filename", "storage_key", "extracted_text")
+    ordering = ("-created_at", "-id")

@@ -4,6 +4,7 @@ from datetime import timedelta
 
 from ai_chat.models import LearnerQuestionState, QuestionPresentation
 
+from .answer_photos import serialize_answer_photo_upload
 from .models import Course
 
 
@@ -110,4 +111,8 @@ def serialize_active_question(presentation: QuestionPresentation | None) -> dict
         },
         "opened_at": presentation.opened_at.isoformat(),
         "closed_at": presentation.closed_at.isoformat() if presentation.closed_at is not None else None,
+        "pending_photos": [
+            serialize_answer_photo_upload(upload)
+            for upload in presentation.answer_photo_uploads.filter(attempt__isnull=True).order_by("display_order", "id")
+        ],
     }

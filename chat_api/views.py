@@ -6,13 +6,20 @@ from django.contrib.auth import authenticate, login as django_login
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.db.models import Count
-from django.http import JsonResponse
+from django.http import HttpResponse, JsonResponse
 from django.utils.text import slugify
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
-from ai_chat.models import ChatSession, QuestionAttempt
+from ai_chat.models import AnswerPhotoUpload, ChatSession, QuestionAttempt
+from ai_chat.storage import object_storage_is_configured
 
+from .answer_photos import (
+    delete_pending_answer_photo_upload,
+    get_answer_photo_bytes,
+    serialize_answer_photo_upload,
+    upload_answer_photos,
+)
 from .auth import get_user_from_authorization_header
 from .models import ApiToken, Course, CourseQuestion, CourseTopic, QuestionType
 from .progress import build_course_progress, serialize_active_question
@@ -56,6 +63,12 @@ def _require_token_user(request):
     return user, None
 
 
+def _require_session_or_token_user(request):
+    if request.user.is_authenticated:
+        return request.user, None
+    return _require_token_user(request)
+
+
 def _parse_positive_int(raw_value) -> int | None:
     if isinstance(raw_value, int) and raw_value > 0:
         return raw_value
@@ -64,6 +77,21 @@ def _parse_positive_int(raw_value) -> int | None:
         if parsed > 0:
             return parsed
     return None
+
+
+def _parse_positive_int_list(raw_value, *, field_name: str) -> list[int]:
+    if raw_value in (None, ""):
+        return []
+    if not isinstance(raw_value, list):
+        raise ValueError(f"{field_name} must be a list of positive integers.")
+
+    normalized: list[int] = []
+    for item in raw_value:
+        parsed = _parse_positive_int(item)
+        if parsed is None:
+            raise ValueError(f"{field_name} must be a list of positive integers.")
+        normalized.append(parsed)
+    return normalized
 
 
 def _resolve_interaction_type_override(action: str) -> str | None:
@@ -236,7 +264,34 @@ def _serialize_attempt(attempt: QuestionAttempt) -> dict[str, object]:
             "id": question_type.pk,
             "name": question_type.name,
         },
+        "photos": [
+            serialize_answer_photo_upload(upload)
+            for upload in attempt.photo_uploads.order_by("display_order", "id")
+        ],
     }
+
+
+def _resolve_pending_answer_photo_for_user(*, user, photo_id: int) -> AnswerPhotoUpload | None:
+    return (
+        AnswerPhotoUpload.objects.select_related("session", "presentation", "attempt")
+        .filter(
+            pk=photo_id,
+            session__user_id=str(user.pk),
+            attempt__isnull=True,
+        )
+        .first()
+    )
+
+
+def _resolve_answer_photo_for_user(*, user, photo_id: int) -> AnswerPhotoUpload | None:
+    return (
+        AnswerPhotoUpload.objects.select_related("session", "presentation", "attempt")
+        .filter(
+            pk=photo_id,
+            session__user_id=str(user.pk),
+        )
+        .first()
+    )
 
 
 def _resolve_course_topic_for_payload(*, course: Course, item: dict) -> CourseTopic:
@@ -619,10 +674,80 @@ def attempts_view(request):
             "presentation__question__topic",
             "presentation__question__question_type",
         )
+        .prefetch_related("photo_uploads")
         .order_by("-created_at", "-id")
     )
 
     return JsonResponse({"attempts": [_serialize_attempt(attempt) for attempt in attempts]})
+
+
+@csrf_exempt
+@require_POST
+def answer_photos_view(request):
+    user, error_response = _require_token_user(request)
+    if error_response is not None:
+        return error_response
+
+    session_id = _parse_positive_int(request.POST.get("session_id"))
+    if session_id is None:
+        return _json_error("session_id must be a positive integer.", status=400)
+
+    session = ChatSession.objects.select_related(
+        "course",
+        "active_presentation__question__topic",
+        "active_presentation__question__question_type",
+    ).filter(pk=session_id, user_id=str(user.pk)).first()
+    if session is None:
+        return _json_error("Session not found.", status=404)
+    if session.active_presentation is None:
+        return _json_error("The session does not have an active question.", status=400)
+    if not object_storage_is_configured():
+        return _json_error("Answer photo storage is not configured.", status=503)
+
+    try:
+        uploads = upload_answer_photos(
+            session=session,
+            presentation=session.active_presentation,
+            uploaded_files=request.FILES.getlist("photos"),
+        )
+    except ValueError as exc:
+        return _json_error(str(exc), status=400)
+
+    return JsonResponse({"photos": [serialize_answer_photo_upload(upload) for upload in uploads]}, status=201)
+
+
+@csrf_exempt
+@require_http_methods(["DELETE"])
+def answer_photo_detail_view(request, photo_id: int):
+    user, error_response = _require_token_user(request)
+    if error_response is not None:
+        return error_response
+
+    upload = _resolve_pending_answer_photo_for_user(user=user, photo_id=photo_id)
+    if upload is None:
+        return _json_error("Pending answer photo not found.", status=404)
+
+    delete_pending_answer_photo_upload(upload)
+    return JsonResponse({"deleted": True})
+
+
+@csrf_exempt
+@require_GET
+def answer_photo_content_view(request, photo_id: int):
+    user, error_response = _require_session_or_token_user(request)
+    if error_response is not None:
+        return error_response
+
+    upload = _resolve_answer_photo_for_user(user=user, photo_id=photo_id)
+    if upload is None:
+        return _json_error("Answer photo not found.", status=404)
+    if not object_storage_is_configured():
+        return _json_error("Answer photo storage is not configured.", status=503)
+
+    body = get_answer_photo_bytes(upload)
+    response = HttpResponse(body, content_type=upload.content_type)
+    response["Content-Length"] = str(len(body))
+    return response
 
 
 @csrf_exempt
@@ -645,10 +770,20 @@ def chat_view(request):
     if payload.get("action") not in (None, "") and interaction_type_override is None:
         return _json_error("action must be one of answer, hint, skip, full_answer, or example_answer.", status=400)
 
+    try:
+        photo_ids = _parse_positive_int_list(payload.get("photo_ids"), field_name="photo_ids")
+    except ValueError as exc:
+        return _json_error(str(exc), status=400)
+
+    if photo_ids and interaction_type_override not in (None, QuestionAttempt.InteractionType.ANSWER_ATTEMPT):
+        return _json_error("photo_ids can only be used with answer submissions.", status=400)
+    if photo_ids and interaction_type_override is None:
+        interaction_type_override = QuestionAttempt.InteractionType.ANSWER_ATTEMPT
+
     text = payload.get("text")
     if not isinstance(text, str):
         text = ""
-    if interaction_type_override in (None, QuestionAttempt.InteractionType.ANSWER_ATTEMPT) and not text.strip():
+    if interaction_type_override in (None, QuestionAttempt.InteractionType.ANSWER_ATTEMPT) and not text.strip() and not photo_ids:
         return _json_error("text must not be blank.", status=400)
 
     try:
@@ -657,6 +792,7 @@ def chat_view(request):
             session_id=session_id,
             text=text,
             interaction_type_override=interaction_type_override,
+            photo_ids=photo_ids,
         )
     except ChatSession.DoesNotExist:
         return _json_error("Session not found.", status=404)
@@ -671,6 +807,10 @@ def chat_view(request):
             "awarded_marks": interaction_result.awarded_marks,
             "derived_leitner_score": interaction_result.derived_leitner_score,
             "completed_presentation": interaction_result.completed_presentation,
+            "interaction_photos": [
+                serialize_answer_photo_upload(upload)
+                for upload in interaction_result.photo_uploads
+            ],
         }
     )
     return JsonResponse(payload)

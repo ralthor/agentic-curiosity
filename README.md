@@ -32,7 +32,13 @@ Settings are loaded from environment variables and `.env`.
 - `OPENAI_PROJECT`: optional
 - `OPENAI_BASE_URL`: optional custom OpenAI-compatible base URL
 - `AI_CHAT_ANSWERER_MODEL`: optional model override used by hint and mark calls
+- `AI_CHAT_OCR_MODEL`: optional model override used when OCRing uploaded answer photos; defaults to `gpt-5.4-mini`
 - `AI_CHAT_MODEL`: fallback model when `AI_CHAT_ANSWERER_MODEL` is unset
+- `AI_CHAT_OBJECT_STORAGE_ENDPOINT`: S3-compatible object-storage endpoint for uploaded answer photos
+- `AI_CHAT_OBJECT_STORAGE_ACCESS_KEY`: object-storage access key used by the app and MinIO
+- `AI_CHAT_OBJECT_STORAGE_SECRET_KEY`: object-storage secret key used by the app and MinIO
+- `AI_CHAT_OBJECT_STORAGE_BUCKET`: bucket name used for private answer-photo storage
+- `AI_CHAT_OBJECT_STORAGE_REGION`: optional S3 region, default `us-east-1`
 - `AI_CHAT_LOG_LEVEL`: optional logger level for the `ai_chat` logger
 - `LOGIN_RATE_LIMIT_ATTEMPTS`: optional failed-login threshold for `POST /api/chat/login/` before the endpoint returns `429` 
 - `LOGIN_RATE_LIMIT_WINDOW_SECONDS`: optional sliding window for login throttling in seconds
@@ -58,9 +64,9 @@ Run the app with Docker Compose:
 docker compose up --build
 ```
 
-This uses [compose.yml](compose.yml) and now mirrors the deployment stack structure: `web`, `redis`, and `nginx`. The `web` service is built from the repo root instead of pulling a published image. SQLite is stored on the host at `./docker-data/db.sqlite3` by bind-mounting `./docker-data` into the container as `/data`, and Redis persistence is stored under `./redis-data`.
+This uses [compose.yml](compose.yml) and now mirrors the deployment stack structure: `web`, `redis`, `minio`, and `nginx`. The `web` service is built from the repo root instead of pulling a published image. SQLite is stored on the host at `./docker-data/db.sqlite3` by bind-mounting `./docker-data` into the container as `/data`, Redis persistence is stored under `./redis-data`, and uploaded answer photos are stored privately in MinIO under `./minio-data`.
 
-The local Compose file now runs Gunicorn behind Nginx, and the container entrypoint still runs `python manage.py migrate` automatically before startup, so the mounted database is initialized on first boot.
+The local Compose file now runs Gunicorn behind Nginx, and the container entrypoint still runs `python manage.py migrate` automatically before startup. It also ensures the configured answer-photo bucket exists before the app starts serving requests.
 
 By default the local root Compose stack binds host port `80` to Nginx. If you want a different local port such as `8000`, set `NGINX_HTTP_PORT=8000` in `.env` before starting the stack.
 
@@ -87,6 +93,7 @@ Example server layout:
   nginx.conf
   docker-data/
   redis-data/
+  minio-data/
 ```
 
 Copy these repo files to the server directory:
@@ -111,6 +118,12 @@ DJANGO_CSRF_TRUSTED_ORIGINS=http://your-domain.example,https://your-domain.examp
 OPENAI_API_KEY=your-openai-api-key
 AI_CHAT_ANSWERER_MODEL=gpt-5.4-mini
 AI_CHAT_MODEL=gpt-5.4-mini
+AI_CHAT_OCR_MODEL=gpt-5.4-mini
+AI_CHAT_OBJECT_STORAGE_ENDPOINT=http://minio:9000
+AI_CHAT_OBJECT_STORAGE_ACCESS_KEY=minioadmin
+AI_CHAT_OBJECT_STORAGE_SECRET_KEY=minioadmin
+AI_CHAT_OBJECT_STORAGE_BUCKET=student-answer-photos
+AI_CHAT_OBJECT_STORAGE_REGION=us-east-1
 ```
 
 Notes on the server `.env`:
@@ -128,10 +141,11 @@ cd /opt/agentic-curiosity
 sh bootstrap.sh
 ```
 
-The script writes `compose.yml` and `nginx.conf`, creates the `docker-data/` and `redis-data/` directories, validates the generated Compose file, and starts three services:
+The script writes `compose.yml` and `nginx.conf`, creates the `docker-data/`, `redis-data/`, and `minio-data/` directories, validates the generated Compose file, and starts four services:
 
 - `web`: your published app image, running Django migrations and Gunicorn
 - `redis`: internal Redis service reserved for future cache or distributed rate-limit work
+- `minio`: internal S3-compatible object store used for uploaded answer photos
 - `nginx`: the only public-facing container, proxying to `web`
 
 If you only want the files without starting containers, run:
@@ -195,11 +209,12 @@ To make the push step work:
 
 You do not need to push a placeholder image first. Creating the Docker Hub repository and configuring the GitHub secrets is enough.
 
-The deploy step assumes `VPS_DEPLOY_PATH` points at a directory that has already been bootstrapped using `deploy/bootstrap.sh`, so that directory already contains `.env`, `compose.yml`, and the persistent data folders. It connects over SSH, changes into `VPS_DEPLOY_PATH`, and runs `docker compose up -d --pull always web`. The server must have modern Docker Compose available as `docker compose`. The SSH user must either be able to run Docker directly, or have passwordless `sudo` for Docker commands. If your Docker Hub repository is private, make sure the server has already run `docker login` once.
+The deploy step assumes `VPS_DEPLOY_PATH` points at a directory that has already been bootstrapped using `deploy/bootstrap.sh`, so that directory already contains `.env` and the persistent data folders. On each deploy, the workflow uploads the latest `deploy/bootstrap.sh`, regenerates `compose.yml` and `nginx.conf` from the server-side `.env`, pulls the latest `web` image, and runs `docker compose up -d --remove-orphans` for the full stack. This means infrastructure additions in the bootstrap-generated stack, such as MinIO, are applied on deploy rather than requiring a separate manual refresh. The server must have modern Docker Compose available as `docker compose`. The SSH user must either be able to run Docker directly, or have passwordless `sudo` for Docker commands. If your Docker Hub repository is private, make sure the server has already run `docker login` once.
 
 Useful pages:
 
 - `/`: browser session console for login, course selection, session creation, and question interaction
+- `/`: the session console also supports taking or uploading answer photos and submitting them for OCR-backed marking
 - `/course-topics/`: browser course studio for creating courses and importing questions with JSON payloads
 - `/admin/`: Django admin for courses, questions, tokens, sessions, attempts, and learner state
 
@@ -211,7 +226,8 @@ Each interaction is scoped to one active question.
 2. `POST /api/chat/sessions/` creates a `ChatSession`.
 3. The selector chooses the first question in code and creates a `QuestionPresentation`.
 4. The learner either asks for a hint, submits an answer, or skips.
-5. The model sees only question-local context:
+5. Answer submissions may include uploaded answer photos. Each photo is stored privately in MinIO, OCRed with the configured OpenAI vision model, and the extracted text is merged into the stored student answer before marking.
+6. The model sees only question-local context:
    - course name
    - topic name
    - question type name
@@ -221,9 +237,9 @@ Each interaction is scoped to one active question.
    - optional marking notes
    - the latest three attempts on the same presented question
    - the latest learner message
-6. The app stores a `QuestionAttempt`.
-7. The app updates `LearnerQuestionState`.
-8. If the question is completed or skipped, the selector assigns the next question without a separate model call.
+7. The app stores a `QuestionAttempt`.
+8. The app updates `LearnerQuestionState`.
+9. If the question is completed or skipped, the selector assigns the next question without a separate model call.
 
 The browser UI provides a `Full Answer` button for the active question. If `example_answer` is stored on the question, that authored answer is returned; otherwise the app asks the model for a full-mark answer using the question text, hint prompt, mark prompt, sample answer, marking notes, and recent attempts, then caches it back onto the question prefixed with `AI generated: `.
 
