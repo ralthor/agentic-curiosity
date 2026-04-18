@@ -34,6 +34,8 @@ Settings are loaded from environment variables and `.env`.
 - `AI_CHAT_ANSWERER_MODEL`: optional model override used by hint and mark calls
 - `AI_CHAT_MODEL`: fallback model when `AI_CHAT_ANSWERER_MODEL` is unset
 - `AI_CHAT_LOG_LEVEL`: optional logger level for the `ai_chat` logger
+- `LOGIN_RATE_LIMIT_ATTEMPTS`: optional failed-login threshold for `POST /api/chat/login/` before the endpoint returns `429` 
+- `LOGIN_RATE_LIMIT_WINDOW_SECONDS`: optional sliding window for login throttling in seconds
 
 If neither `AI_CHAT_ANSWERER_MODEL` nor `AI_CHAT_MODEL` is set, the tutoring runtime falls back to `gpt-5.4-mini`.
 
@@ -56,9 +58,11 @@ Run the app with Docker Compose:
 docker compose up --build
 ```
 
-This uses [compose.yml](compose.yml) and stores the SQLite database on the host at `./docker-data/db.sqlite3` by bind-mounting `./docker-data` into the container as `/data`.
+This uses [compose.yml](compose.yml) and now mirrors the deployment stack structure: `web`, `redis`, and `nginx`. The `web` service is built from the repo root instead of pulling a published image. SQLite is stored on the host at `./docker-data/db.sqlite3` by bind-mounting `./docker-data` into the container as `/data`, and Redis persistence is stored under `./redis-data`.
 
-The local Compose file keeps the app on Django `runserver` and runs `python manage.py migrate` automatically before startup, so the mounted database is initialized on first boot.
+The local Compose file now runs Gunicorn behind Nginx, and the container entrypoint still runs `python manage.py migrate` automatically before startup, so the mounted database is initialized on first boot.
+
+By default the local root Compose stack binds host port `80` to Nginx. If you want a different local port such as `8000`, set `NGINX_HTTP_PORT=8000` in `.env` before starting the stack.
 
 If you want to run without Compose, mount a host directory and point Django at it explicitly:
 
@@ -67,7 +71,7 @@ docker build -t agentic-curiosity .
 docker run --rm -it -p 8000:8000 --env-file .env -e DJANGO_DB_PATH=/data/db.sqlite3 -v ./docker-data:/data agentic-curiosity
 ```
 
-The local Compose path still uses `runserver`, which is fine for simple testing and CI but is not a hardened production web stack.
+The local Compose path now uses the same Gunicorn-plus-Nginx shape as deployment, but it builds the `web` image from the working tree.
 
 ### Server Deployment With Docker
 
@@ -127,7 +131,7 @@ sh bootstrap.sh
 The script writes `compose.yml` and `nginx.conf`, creates the `docker-data/` and `redis-data/` directories, validates the generated Compose file, and starts three services:
 
 - `web`: your published app image, running Django migrations and Gunicorn
-- `redis`: internal Redis service for later cache/rate-limit work
+- `redis`: internal Redis service reserved for future cache or distributed rate-limit work
 - `nginx`: the only public-facing container, proxying to `web`
 
 If you only want the files without starting containers, run:
@@ -274,7 +278,7 @@ Base path: `/api/chat/`
 
 ### Authentication
 
-- `POST /login/`: authenticate with Django username/password, create a browser session, and return an API token
+- `POST /login/`: authenticate with Django username/password, create a browser session, and return an API token; repeated failed attempts for the same username and client are throttled with `429`
 - `POST /token/`: return the current browser session's token; this requires an already-authenticated Django session
 
 ### Courses

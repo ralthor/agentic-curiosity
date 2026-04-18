@@ -17,8 +17,11 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import include, path
 
+from core.views import admin_login
+
 urlpatterns = [
     path('', include('core.urls')),
     path('api/chat/', include('chat_api.urls')),
+    path('admin/login/', admin_login, name='admin-login'),
     path('admin/', admin.site.urls),
 ]

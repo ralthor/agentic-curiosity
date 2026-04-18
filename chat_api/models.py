@@ -136,3 +136,23 @@ class ApiToken(models.Model):
             token.key = generate_api_token_key()
             token.save(update_fields=["key", "updated_at"])
         return token
+
+
+class LoginRateLimit(models.Model):
+    username_key = models.CharField(max_length=255)
+    client_identifier = models.CharField(max_length=255)
+    failed_attempt_timestamps = models.JSONField(default=list, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("username_key", "client_identifier", "id")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("username_key", "client_identifier"),
+                name="chat_api_login_rate_limit_unique_identity",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"LoginRateLimit(username_key={self.username_key}, client_identifier={self.client_identifier})"
