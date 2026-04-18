@@ -178,9 +178,8 @@ The local dev container still uses Django `runserver`. The deployment bootstrap 
 
 GitHub Actions now includes [.github/workflows/docker-image.yml](.github/workflows/docker-image.yml), modeled on the other project:
 
-- pull requests to `master` build the image only
 - pushes to `master` build and push the image to Docker Hub
-- pushes to `master` then SSH to the VPS and redeploy the `web` service from the latest image
+- those same pushes to `master` then SSH to the VPS and redeploy the `web` service from the latest image
 
 To make the push step work:
 
