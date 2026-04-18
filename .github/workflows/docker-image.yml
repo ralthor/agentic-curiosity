@@ -51,6 +51,19 @@ jobs:
       contents: read
 
     steps:
+      - uses: actions/checkout@v4
+
+      - name: Upload bootstrap script to VPS
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          password: ${{ secrets.VPS_PASSWORD }}
+          port: 22
+          source: deploy/bootstrap.sh
+          target: ${{ secrets.VPS_DEPLOY_PATH }}
+          strip_components: 1
+
       - name: Deploy web on VPS
         uses: appleboy/ssh-action@v1
         with:
@@ -83,5 +96,8 @@ jobs:
               exit 1
             fi
 
-            RUN_DOCKER compose up -d --pull always web
-            RUN_DOCKER compose ps web
+            chmod +x bootstrap.sh
+            sh bootstrap.sh --write-only
+            RUN_DOCKER compose pull web
+            RUN_DOCKER compose up -d --remove-orphans
+            RUN_DOCKER compose ps

@@ -68,7 +68,7 @@ require_env_key DJANGO_SECRET_KEY
 require_env_key DJANGO_ALLOWED_HOSTS
 require_env_key OPENAI_API_KEY
 
-mkdir -p "$SCRIPT_DIR/docker-data/static" "$SCRIPT_DIR/redis-data"
+mkdir -p "$SCRIPT_DIR/docker-data/static" "$SCRIPT_DIR/redis-data" "$SCRIPT_DIR/minio-data"
 
 cat >"$COMPOSE_FILE" <<'EOF'
 services:
@@ -84,10 +84,16 @@ services:
       DJANGO_USE_X_FORWARDED_HOST: "true"
       DJANGO_TRUST_X_FORWARDED_PROTO: "true"
       GUNICORN_BIND: 0.0.0.0:8000
+      AI_CHAT_OBJECT_STORAGE_ENDPOINT: ${AI_CHAT_OBJECT_STORAGE_ENDPOINT:-http://minio:9000}
+      AI_CHAT_OBJECT_STORAGE_ACCESS_KEY: ${AI_CHAT_OBJECT_STORAGE_ACCESS_KEY:-minioadmin}
+      AI_CHAT_OBJECT_STORAGE_SECRET_KEY: ${AI_CHAT_OBJECT_STORAGE_SECRET_KEY:-minioadmin}
+      AI_CHAT_OBJECT_STORAGE_BUCKET: ${AI_CHAT_OBJECT_STORAGE_BUCKET:-student-answer-photos}
+      AI_CHAT_OBJECT_STORAGE_REGION: ${AI_CHAT_OBJECT_STORAGE_REGION:-us-east-1}
     volumes:
       - ./docker-data:/data
     depends_on:
       - redis
+      - minio
     expose:
       - "8000"
 
@@ -99,6 +105,19 @@ services:
       - ./redis-data:/data
     expose:
       - "6379"
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${AI_CHAT_OBJECT_STORAGE_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${AI_CHAT_OBJECT_STORAGE_SECRET_KEY:-minioadmin}
+    volumes:
+      - ./minio-data:/data
+    expose:
+      - "9000"
+      - "9001"
 
   nginx:
     image: nginx:1.27-alpine
@@ -117,7 +136,7 @@ server {
     listen 80;
     server_name _;
 
-    client_max_body_size 2m;
+    client_max_body_size 40m;
 
     location /static/ {
         alias /srv/static/;
